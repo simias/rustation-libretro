@@ -15,8 +15,29 @@ use std::ffi::CStr;
 use libc::{c_void, c_char, c_uint, c_float, c_double, size_t, int16_t};
 use std::path::Path;
 
-/// Global CPU instance holding our emulator state
-//static mut instance: *mut ::cpu::Cpu = 0 as *mut ::cpu::Cpu;
+pub trait Context {
+    fn render_frame(&mut self);
+    fn get_system_av_info(&self) -> SystemAvInfo;
+}
+
+/// Global context instance holding our emulator state. Libretro 1
+/// doesn't support multi-instancing
+static mut static_context: *mut Context = &mut dummy::Context;
+
+unsafe fn set_context(context: Box<Context>) {
+    static_context = Box::into_raw(context);
+}
+
+unsafe fn drop_context() {
+    Box::from_raw(static_context);
+    static_context = &mut dummy::Context;
+}
+
+fn context() -> &'static mut Context {
+    unsafe {
+        &mut *static_context
+    }
+}
 
 #[repr(C)]
 pub struct SystemInfo {
@@ -48,9 +69,8 @@ pub struct SystemAvInfo {
     pub timing: SystemTiming,
 }
 
-
 pub type EnvironmentFn =
-    unsafe extern "C" fn(cmd: c_uint, data: *mut c_void);
+    unsafe extern "C" fn(cmd: c_uint, data: *mut c_void) -> bool;
 
 pub type VideoRefreshFn =
     unsafe extern "C" fn(data: *const c_void,
@@ -78,6 +98,20 @@ pub struct GameInfo {
     data: *const c_void,
     size: size_t,
     meta: *const c_char,
+}
+
+#[repr(C)]
+pub struct Variable {
+    key: *const c_char,
+    value: *const c_char,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Environment {
+    SetHwRender = 14,
+    GetVariable = 15,
+    SetVariables = 16,
+    GetVariableUpdate = 17,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -112,6 +146,89 @@ pub enum JoyPadButton {
     R3 = 15,
 }
 
+pub mod hw_context {
+    use libc::{uintptr_t, c_char, c_uint};
+    use super::{set_environment, Environment};
+
+    pub type ResetFn = extern "C" fn();
+
+    pub type GetCurrentFramebufferFn = extern "C" fn() -> uintptr_t;
+
+    pub type GetProcAddressFn = extern "C" fn(sym: *const c_char) -> *const ();
+
+    #[repr(C)]
+    pub enum ContextType {
+        None = 0,
+        OpenGl = 1,
+        OpenGlEs2 = 2,
+        OpenGlCore = 3,
+        OpenGlEs3 = 4,
+        OpenGlEsVersion = 5,
+    }
+
+    #[repr(C)]
+    pub struct RenderCallback {
+        context_type: ContextType,
+        context_reset: ResetFn,
+        get_current_framebuffer: GetCurrentFramebufferFn,
+        get_proc_address: GetProcAddressFn,
+        depth: bool,
+        stencil: bool,
+        bottom_left_origin: bool,
+        version_major: c_uint,
+        version_minor: c_uint,
+        cache_context: bool,
+        context_destroy: ResetFn,
+        debug_context: bool,
+    }
+
+    pub extern "C" fn reset() {
+        println!("Context reset!");
+    }
+
+    pub extern "C" fn context_destroy() {
+        unsafe {
+            static_hw_context.get_current_framebuffer =
+                dummy_get_current_framebuffer;
+            static_hw_context.get_proc_address =
+                dummy_get_proc_address;
+        }
+
+        panic!("Context destroy!");
+    }
+
+    pub extern "C" fn dummy_get_current_framebuffer() -> uintptr_t {
+        panic!("Called missing get_current_framebuffer callback");
+    }
+
+    pub extern "C" fn dummy_get_proc_address(_: *const c_char) -> *const () {
+        panic!("Called missing get_proc_address callback");
+    }
+
+    static mut static_hw_context: RenderCallback = RenderCallback {
+        context_type: ContextType::OpenGlCore,
+        context_reset: reset,
+        // Filled by frontend
+        get_current_framebuffer: dummy_get_current_framebuffer,
+        // Filled by frontend
+        get_proc_address: dummy_get_proc_address,
+        depth: false,
+        stencil: false,
+        bottom_left_origin: true,
+        version_major: 3,
+        version_minor: 3,
+        cache_context: false,
+        context_destroy: context_destroy,
+        debug_context: false,
+    };
+
+    pub fn init() -> bool {
+        unsafe {
+            set_environment(Environment::SetHwRender, &mut static_hw_context)
+        }
+    }
+}
+
 //*******************************************
 // Libretro callbacks loaded by the frontend
 //*******************************************
@@ -120,6 +237,7 @@ static mut video_refresh: VideoRefreshFn = dummy::video_refresh;
 static mut input_poll: InputPollFn = dummy::input_poll;
 static mut input_state: InputStateFn = dummy::input_state;
 static mut audio_sample_batch: AudioSampleBatchFn = dummy::audio_sample_batch;
+static mut environment: EnvironmentFn = dummy::environment;
 
 //*******************************
 // Higher level helper functions
@@ -158,6 +276,31 @@ pub fn button_pressed(b: JoyPadButton) -> bool {
     }
 }
 
+unsafe fn set_environment<T>(which: Environment, var: &mut T) -> bool {
+    environment(which as c_uint, var as *mut _ as *mut c_void)
+}
+
+/// Cast a mutable pointer into a mutable reference, return None if
+/// it's NULL.
+fn ptr_as_mut_ref<'a, T>(v: *mut T) -> Option<&'a mut T> {
+
+    if v.is_null() {
+        None
+    } else {
+        Some(unsafe { &mut *v })
+    }
+}
+
+/// Cast a const pointer into a reference, return None if it's NULL.
+fn ptr_as_ref<'a, T>(v: *const T) -> Option<&'a T> {
+
+    if v.is_null() {
+        None
+    } else {
+        Some(unsafe { &*v })
+    }
+}
+
 //**********************************************
 // Libretro entry points called by the frontend
 //**********************************************
@@ -169,7 +312,10 @@ pub extern "C" fn retro_api_version() -> c_uint {
 }
 
 #[no_mangle]
-pub extern "C" fn retro_set_environment(_: EnvironmentFn) {
+pub extern "C" fn retro_set_environment(callback: EnvironmentFn) {
+    unsafe {
+        environment = callback
+    }
 }
 
 #[no_mangle]
@@ -224,22 +370,7 @@ pub extern "C" fn retro_get_system_info(info: *mut SystemInfo) {
 pub extern "C" fn retro_get_system_av_info(info: *mut SystemAvInfo) {
     let info = ptr_as_mut_ref(info).unwrap();
 
-    println!("AV INFO");
-
-    *info = SystemAvInfo {
-        // XXX Dynamic me
-        geometry: GameGeometry {
-            base_width: 160,
-            base_height: 144,
-            max_width: 160,
-            max_height: 144,
-            aspect_ratio: -1.0,
-        },
-        timing: SystemTiming {
-            fps: (0x400000 as f64) / (456. * 154.),
-            sample_rate: (0x400000 as f64) / 95.,
-        }
-    }
+    *info = context().get_system_av_info();
 }
 
 #[no_mangle]
@@ -257,7 +388,7 @@ pub extern "C" fn retro_reset() {
 pub unsafe extern "C" fn retro_run() {
     input_poll();
 
-    //::render_frame(ptr_as_mut_ref(instance).unwrap());
+    context().render_frame();
 }
 
 #[no_mangle]
@@ -289,24 +420,33 @@ pub fn retro_cheat_set(_index: c_uint,
 
 #[no_mangle]
 pub extern "C" fn retro_load_game(info: *const GameInfo) -> bool {
-    // let info = ptr_as_ref(info).unwrap();
+    let info = ptr_as_ref(info).unwrap();
 
-    // if info.path.is_null() {
-    //     println!("No path in GameInfo!");
-    //     return false;
-    // }
+    if info.path.is_null() {
+        println!("No path in GameInfo!");
+        return false;
+    }
 
-    // let path = unsafe {
-    //     CStr::from_ptr(info.path)
-    // }.to_str().unwrap();
+    let path = unsafe {
+        CStr::from_ptr(info.path)
+    }.to_str().unwrap();
 
-    // let cpu = Box::new(::load_game(Path::new(path)));
+    if !hw_context::init() {
+        return false;
+    }
 
-    // unsafe {
-    //     instance = Box::into_raw(cpu);
-    // }
-
-    true
+    match ::load_game(Path::new(path)) {
+        Some(c) => {
+            unsafe {
+                set_context(c);
+            }
+            true
+        }
+        None => {
+            println!("Couldn't load game!");
+            false
+        }
+    }
 }
 
 #[no_mangle]
@@ -318,32 +458,7 @@ pub extern "C" fn retro_load_game_special(_type: c_uint,
 
 #[no_mangle]
 pub unsafe extern "C" fn retro_unload_game()  {
-    // if !instance.is_null() {
-    //     // Rebuild the Box to free the instance
-    //     Box::from_raw(instance);
-    //     instance = ptr::null_mut();
-    // }
-}
-
-/// Cast a mutable pointer into a mutable reference, return None if
-/// it's NULL.
-pub fn ptr_as_mut_ref<'a, T>(v: *mut T) -> Option<&'a mut T> {
-
-    if v.is_null() {
-        None
-    } else {
-        Some(unsafe { &mut *v })
-    }
-}
-
-/// Cast a const pointer into a reference, return None if it's NULL.
-pub fn ptr_as_ref<'a, T>(v: *const T) -> Option<&'a T> {
-
-    if v.is_null() {
-        None
-    } else {
-        Some(unsafe { &*v })
-    }
+    drop_context();
 }
 
 #[no_mangle]
@@ -389,5 +504,21 @@ pub mod dummy {
                                   _: c_uint,
                                   _: c_uint) -> int16_t {
         panic!("Called missing input_state callback");
+    }
+
+    pub unsafe extern "C" fn environment(_: c_uint, _: *mut c_void) -> bool {
+        panic!("Called missing environment callback");
+    }
+
+    pub struct Context;
+
+    impl super::Context for Context {
+        fn render_frame(&mut self) {
+            panic!("Called render_frame with no context!");
+        }
+
+        fn get_system_av_info(&self) -> super::SystemAvInfo {
+            panic!("Called get_system_av_info with no context!");
+        }
     }
 }

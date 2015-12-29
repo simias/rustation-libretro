@@ -13,8 +13,8 @@ license = "GPL-2.0+"
 keywords = ["emulator", "playstation"]
 
 [dependencies]
-
 libc = "0.2.4"
+glium = "0.13.2"
 
 [lib]
 name = "rustation_retro"
