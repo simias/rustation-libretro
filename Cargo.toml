@@ -14,7 +14,8 @@ keywords = ["emulator", "playstation"]
 
 [dependencies]
 libc = "0.2.4"
-glium = "0.13.2"
+gl = "0.5.2"
+log = "0.3.4"
 
 [lib]
 name = "rustation_retro"

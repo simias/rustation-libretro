@@ -1,11 +1,15 @@
 pub mod libretro;
+mod retrogl;
+mod retrolog;
 
 use std::path::Path;
 
 use libc::{c_char, c_uint};
 
 extern crate libc;
-extern crate glium;
+extern crate gl;
+#[macro_use]
+extern crate log;
 extern crate rustation;
 
 macro_rules! cstring {
@@ -25,26 +29,29 @@ const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
 
 /// Emulator context
 struct Context {
-    facade: Facade,
+    retrogl: retrogl::RetroGl,
 }
 
 impl Context {
-    fn new() -> Context {
-        Context {
-            facade: Facade::new(),
-        }
+    fn new() -> Option<Context> {
+        retrogl::RetroGl::new()
+            .map(|r|
+                 Context {
+                     retrogl: r,
+                 })
     }
 }
 
 impl libretro::Context for Context {
+
     fn render_frame(&mut self) {
     }
 
     fn get_system_av_info(&self) -> libretro::SystemAvInfo {
         libretro::SystemAvInfo {
             geometry: libretro::GameGeometry {
-                base_width: self.facade.xres() as c_uint,
-                base_height: self.facade.yres() as c_uint,
+                base_width: self.retrogl.xres() as c_uint,
+                base_height: self.retrogl.yres() as c_uint,
                 max_width: 640,
                 max_height: 576,
                 aspect_ratio: -1.0,
@@ -57,30 +64,15 @@ impl libretro::Context for Context {
     }
 }
 
+/// Init function, called only once when our core gets loaded
+fn init() {
+    retrolog::init();
+}
+
 /// Called when a game is loaded and a new context must be built
-fn load_game(_: &Path) -> Option<Box<libretro::Context>> {
-    Some(Box::new(Context::new()) as Box<libretro::Context>)
-}
+fn load_game(game: &Path) -> Option<Box<libretro::Context>> {
+    info!("Loading {:?}", game);
 
-/// Libretro facade for glium
-struct Facade {
-    xres: u16,
-    yres: u16,
-}
-
-impl Facade {
-    fn new() -> Facade {
-        Facade {
-            xres: 640,
-            yres: 480,
-        }
-    }
-
-    fn xres(&self) -> u16 {
-        self.xres
-    }
-
-    fn yres(&self) -> u16 {
-        self.yres
-    }
+    Context::new()
+        .map(|c| Box::new(c) as Box<libretro::Context>)
 }

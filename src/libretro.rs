@@ -112,6 +112,7 @@ pub enum Environment {
     GetVariable = 15,
     SetVariables = 16,
     GetVariableUpdate = 17,
+    GetLogInterface = 27,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,14 +148,14 @@ pub enum JoyPadButton {
 }
 
 pub mod hw_context {
-    use libc::{uintptr_t, c_char, c_uint};
-    use super::{set_environment, Environment};
+    use libc::{uintptr_t, c_char, c_uint, c_void};
+    use super::{call_environment, Environment};
 
     pub type ResetFn = extern "C" fn();
 
     pub type GetCurrentFramebufferFn = extern "C" fn() -> uintptr_t;
 
-    pub type GetProcAddressFn = extern "C" fn(sym: *const c_char) -> *const ();
+    pub type GetProcAddressFn = extern "C" fn(sym: *const c_char) -> *const c_void;
 
     #[repr(C)]
     pub enum ContextType {
@@ -183,7 +184,7 @@ pub mod hw_context {
     }
 
     pub extern "C" fn reset() {
-        println!("Context reset!");
+        warn!("Context reset!");
     }
 
     pub extern "C" fn context_destroy() {
@@ -201,7 +202,7 @@ pub mod hw_context {
         panic!("Called missing get_current_framebuffer callback");
     }
 
-    pub extern "C" fn dummy_get_proc_address(_: *const c_char) -> *const () {
+    pub extern "C" fn dummy_get_proc_address(_: *const c_char) -> *const c_void {
         panic!("Called missing get_proc_address callback");
     }
 
@@ -224,7 +225,85 @@ pub mod hw_context {
 
     pub fn init() -> bool {
         unsafe {
-            set_environment(Environment::SetHwRender, &mut static_hw_context)
+            call_environment(Environment::SetHwRender, &mut static_hw_context)
+        }
+    }
+
+    pub fn get_proc_address(sym: &str) -> *const c_void {
+        unsafe {
+            (static_hw_context.get_proc_address)(sym.as_ptr() as *const c_char)
+        }
+    }
+}
+
+pub mod log {
+    use super::{call_environment, Environment};
+    use std::ffi::CString;
+    use libc::c_char;
+
+    #[repr(C)]
+    #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum Level {
+        Debug = 0,
+        Info = 1,
+        Warn = 2,
+        Error = 3,
+    }
+
+    /// I'm lying here for convenience: the function is really a
+    /// variadic printf-like but Rust won't let me implement a
+    /// variadic `dummy_log`. It doesn't matter anyway, we'll let Rust
+    /// do all the formatting and simply pass a single ("%s",
+    /// "formatted string").
+    pub type PrintfFn = extern "C" fn(Level,
+                                      *const c_char,
+                                      *const c_char);
+
+    #[repr(C)]
+    pub struct Callback {
+        log: PrintfFn,
+    }
+
+    extern "C" fn dummy_log(_: Level,
+                            _: *const c_char,
+                            _: *const c_char) {
+        panic!("Called missing log callback");
+    }
+
+    static mut static_log: PrintfFn = dummy_log as PrintfFn;
+
+    pub fn init() -> bool {
+        let mut cb = Callback { log: dummy_log };
+
+        unsafe {
+            let ok = call_environment(Environment::GetLogInterface, &mut cb);
+
+            if ok {
+                static_log = cb.log;
+            }
+
+            ok
+        }
+    }
+
+    /// Send `msg` to the frontend's logger. This function will add
+    /// `\n` at the end of the message.
+    pub fn log(lvl: Level, msg: &str) {
+        let msg = CString::new(msg);
+
+        let cstr =
+            match msg.as_ref() {
+                Ok(s) => s.as_ptr(),
+                // XXX we could replace \0 in the log with something
+                // else instead.
+                _ => b"<Invalid log message>" as *const _ as *const c_char,
+            };
+
+        unsafe {
+            // The %s makes sure the frontend won't try to interpret
+            // any '%' possibly present in the log message. Libretro
+            // messages should always end with a \n.
+            static_log(lvl, b"%s\n" as *const _ as *const c_char, cstr);
         }
     }
 }
@@ -276,7 +355,7 @@ pub fn button_pressed(b: JoyPadButton) -> bool {
     }
 }
 
-unsafe fn set_environment<T>(which: Environment, var: &mut T) -> bool {
+unsafe fn call_environment<T>(which: Environment, var: &mut T) -> bool {
     environment(which as c_uint, var as *mut _ as *mut c_void)
 }
 
@@ -352,10 +431,13 @@ pub extern "C" fn retro_set_input_state(callback: InputStateFn) {
 
 #[no_mangle]
 pub extern "C" fn retro_init() {
+    ::init()
 }
 
 #[no_mangle]
 pub extern "C" fn retro_deinit() {
+    // XXX Should I reset the callbacks to the dummy implementations
+    // here?
 }
 
 #[no_mangle]
@@ -376,12 +458,12 @@ pub extern "C" fn retro_get_system_av_info(info: *mut SystemAvInfo) {
 #[no_mangle]
 pub extern "C" fn retro_set_controller_port_device(_port: c_uint,
                                                    _device: c_uint) {
-    println!("port device: {} {}", _port, _device);
+    debug!("port device: {} {}", _port, _device);
 }
 
 #[no_mangle]
 pub extern "C" fn retro_reset() {
-    println!("retro reset");
+    warn!("retro reset");
 }
 
 #[no_mangle]
@@ -423,7 +505,7 @@ pub extern "C" fn retro_load_game(info: *const GameInfo) -> bool {
     let info = ptr_as_ref(info).unwrap();
 
     if info.path.is_null() {
-        println!("No path in GameInfo!");
+        warn!("No path in GameInfo!");
         return false;
     }
 
@@ -443,7 +525,7 @@ pub extern "C" fn retro_load_game(info: *const GameInfo) -> bool {
             true
         }
         None => {
-            println!("Couldn't load game!");
+            error!("Couldn't load game!");
             false
         }
     }
