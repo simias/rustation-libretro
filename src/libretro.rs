@@ -18,6 +18,7 @@ use std::path::Path;
 pub trait Context {
     fn render_frame(&mut self);
     fn get_system_av_info(&self) -> SystemAvInfo;
+    fn gl_context_reset(&mut self);
 }
 
 /// Global context instance holding our emulator state. Libretro 1
@@ -184,7 +185,7 @@ pub mod hw_context {
     }
 
     pub extern "C" fn reset() {
-        warn!("Context reset!");
+        super::context().gl_context_reset();
     }
 
     pub extern "C" fn context_destroy() {
@@ -601,6 +602,10 @@ pub mod dummy {
 
         fn get_system_av_info(&self) -> super::SystemAvInfo {
             panic!("Called get_system_av_info with no context!");
+        }
+
+        fn gl_context_reset(&mut self) {
+            panic!("Called context_reset with no context!");
         }
     }
 }

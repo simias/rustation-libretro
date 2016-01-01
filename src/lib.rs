@@ -62,6 +62,10 @@ impl libretro::Context for Context {
             }
         }
     }
+
+    fn gl_context_reset(&mut self) {
+        self.retrogl.context_reset();
+    }
 }
 
 /// Init function, called only once when our core gets loaded
