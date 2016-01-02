@@ -5,9 +5,13 @@ use gl;
 
 use self::buffer::VertexBuffer;
 use self::error::Error;
+use self::vertex::VertexArrayObject;
+use self::program::{Shader, ShaderType};
 
 mod error;
 mod buffer;
+mod vertex;
+mod program;
 
 pub struct RetroGl {
     /// Current horizontal resolution of the video output
@@ -50,6 +54,10 @@ impl RetroGl {
         }
     }
 
+    pub fn context_destroy(&mut self) {
+        self.state = None
+    }
+
     pub fn xres(&self) -> u16 {
         self.xres
     }
@@ -60,13 +68,25 @@ impl RetroGl {
 }
 
 pub struct State {
+    vao: VertexArrayObject,
     buffer: VertexBuffer<u32>,
+    vertex_shader: Shader,
 }
 
 impl State {
     fn new() -> Result<State, Error> {
+
+        let vs = try!(Shader::new(include_str!("shaders/vertex.glsl"),
+                                  ShaderType::Vertex));
+
+        let vao = try!(VertexArrayObject::new());
+
+        let buffer = try!(VertexBuffer::new(1024, &vao));
+
         Ok(State {
-            buffer: try!(VertexBuffer::new(1024)),
+            vao: vao,
+            buffer: buffer,
+            vertex_shader: vs,
         })
     }
 }

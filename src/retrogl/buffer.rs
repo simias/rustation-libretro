@@ -6,6 +6,7 @@ use gl;
 use gl::types::{GLuint, GLsizeiptr};
 
 use retrogl::error::{Error, error_or};
+use retrogl::vertex::VertexArrayObject;
 
 pub struct VertexBuffer<T> {
     /// Number of elements T that the vertex buffer can hold
@@ -18,7 +19,9 @@ pub struct VertexBuffer<T> {
 
 impl<T> VertexBuffer<T> {
 
-    pub fn new(capacity: usize) -> Result<VertexBuffer<T>, Error> {
+    pub fn new(capacity: usize,
+               vao: &VertexArrayObject) -> Result<VertexBuffer<T>, Error> {
+
         let mut id = 0;
 
         unsafe {
@@ -32,7 +35,7 @@ impl<T> VertexBuffer<T> {
             contains: PhantomData::<T>,
         };
 
-        buf.clear();
+        buf.clear(vao);
 
         error_or(buf)
     }
@@ -41,8 +44,8 @@ impl<T> VertexBuffer<T> {
     /// new one.
     ///
     /// https://www.opengl.org/wiki/Buffer_Object_Streaming
-    pub fn clear(&self) {
-        self.bind();
+    pub fn clear(&self, vao: &VertexArrayObject) {
+        self.bind(vao);
 
         unsafe {
             // Compute the size of the buffer
@@ -58,7 +61,9 @@ impl<T> VertexBuffer<T> {
     }
 
     /// Bind the buffer to the current VAO
-    pub fn bind(&self) {
+    pub fn bind(&self, vao: &VertexArrayObject) {
+        vao.bind();
+
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.id);
         }
@@ -67,7 +72,6 @@ impl<T> VertexBuffer<T> {
 
 impl<T> Drop for VertexBuffer<T> {
     fn drop(&mut self) {
-        self.bind();
         unsafe {
             gl::DeleteBuffers(1, &self.id);
         }

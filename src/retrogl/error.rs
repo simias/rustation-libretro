@@ -1,9 +1,12 @@
 use gl;
-use gl::types::GLenum;
+use gl::types::{GLenum, GLint};
+
+use retrogl::program::ShaderType;
 
 /// OpenGL errors
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Error {
+    /// Error codes returned by glGetError
     InvalidEnum,
     InvalidValue,
     InvalidOperation,
@@ -11,6 +14,8 @@ pub enum Error {
     OutOfMemory,
     /// In case we encounter an unknown OpenGL error code
     Unknown(GLenum),
+    /// When shader compilation fails
+    BadShader(ShaderType),
 }
 
 fn get_error() -> Result<(), Error> {

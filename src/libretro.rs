@@ -19,6 +19,7 @@ pub trait Context {
     fn render_frame(&mut self);
     fn get_system_av_info(&self) -> SystemAvInfo;
     fn gl_context_reset(&mut self);
+    fn gl_context_destroy(&mut self);
 }
 
 /// Global context instance holding our emulator state. Libretro 1
@@ -197,7 +198,7 @@ pub mod hw_context {
                 dummy_get_proc_address;
         }
 
-        panic!("Context destroy!");
+        super::context().gl_context_destroy();
     }
 
     pub extern "C" fn dummy_get_current_framebuffer() -> uintptr_t {
@@ -292,9 +293,22 @@ pub mod log {
         }
     }
 
-    /// Send `msg` to the frontend's logger. This function will add
-    /// `\n` at the end of the message.
+    /// Send `msg` to the frontend's logger.
     pub fn log(lvl: Level, msg: &str) {
+        // Make sure the message ends in a \n, mandated by the
+        // libretro API.
+
+        let trailing_newline =
+            msg.as_bytes().last().map_or(false, |&c| c == b'\n');
+
+        let format =
+            if trailing_newline {
+                // Message already contains a \n
+                "%s\0"
+            } else {
+                "%s\n\0"
+            };
+
         let msg = CString::new(msg);
 
         let cstr =
@@ -306,10 +320,7 @@ pub mod log {
             };
 
         unsafe {
-            // The %s makes sure the frontend won't try to interpret
-            // any '%' possibly present in the log message. Libretro
-            // messages should always end with a \n.
-            static_log(lvl, b"%s\n" as *const _ as *const c_char, cstr);
+            static_log(lvl, format.as_ptr() as *const _, cstr);
         }
     }
 }
@@ -607,6 +618,10 @@ pub mod dummy {
 
         fn gl_context_reset(&mut self) {
             panic!("Called context_reset with no context!");
+        }
+
+        fn gl_context_destroy(&mut self) {
+            panic!("Called context_destroy with no context!");
         }
     }
 }
