@@ -149,6 +149,7 @@ pub enum JoyPadButton {
 }
 
 pub mod hw_context {
+    use std::ffi::CString;
     use libc::{uintptr_t, c_char, c_uint, c_void};
     use super::{call_environment, Environment};
 
@@ -231,6 +232,10 @@ pub mod hw_context {
     }
 
     pub fn get_proc_address(sym: &str) -> *const c_void {
+        // OpenGL symbols should never contain \0 or something's very
+        // wrong.
+        let sym = CString::new(sym).unwrap();
+
         unsafe {
             (static_hw_context.get_proc_address)(sym.as_ptr() as *const c_char)
         }
@@ -513,10 +518,6 @@ pub extern "C" fn retro_load_game(info: *const GameInfo) -> bool {
     let path = unsafe {
         CStr::from_ptr(info.path)
     }.to_str().unwrap();
-
-    if !hw_context::init() {
-        return false;
-    }
 
     match ::load_game(Path::new(path)) {
         Some(c) => {

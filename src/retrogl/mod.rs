@@ -41,12 +41,7 @@ impl RetroGl {
 
         // Should I call this at every reset? Does it matter?
         gl::load_with(|s| {
-            let p =
-                libretro::hw_context::get_proc_address(s) as *const _;
-
-            debug!("Load {} -> {:?}", s, p);
-
-            p
+            libretro::hw_context::get_proc_address(s) as *const _
         });
 
         match State::new() {
