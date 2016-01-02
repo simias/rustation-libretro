@@ -25,6 +25,7 @@ impl VertexArrayObject {
             gl::BindVertexArray(self.id);
         }
     }
+
 }
 
 impl Drop for VertexArrayObject {

@@ -1,7 +1,7 @@
 use gl;
-use gl::types::{GLenum, GLint};
+use gl::types::GLenum;
 
-use retrogl::program::ShaderType;
+use retrogl::shader::ShaderType;
 
 /// OpenGL errors
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -16,9 +16,11 @@ pub enum Error {
     Unknown(GLenum),
     /// When shader compilation fails
     BadShader(ShaderType),
+    /// When program linking fails
+    BadProgram,
 }
 
-fn get_error() -> Result<(), Error> {
+pub fn get_error() -> Result<(), Error> {
     match unsafe { gl::GetError() } {
         gl::NO_ERROR => Ok(()),
         gl::INVALID_ENUM => Err(Error::InvalidEnum),
@@ -33,8 +35,5 @@ fn get_error() -> Result<(), Error> {
 
 /// Return `Ok(v)` if no OpenGL error flag is active
 pub fn error_or<T>(v: T) -> Result<T, Error> {
-
-    try!(get_error());
-
-    Ok(v)
+    get_error().map(|_| v)
 }

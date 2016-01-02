@@ -241,6 +241,12 @@ pub mod hw_context {
             (static_hw_context.get_proc_address)(sym.as_ptr() as *const c_char)
         }
     }
+
+    pub fn get_current_framebuffer() -> uintptr_t {
+        unsafe {
+            (static_hw_context.get_current_framebuffer)()
+        }
+    }
 }
 
 pub mod log {
@@ -339,11 +345,12 @@ static mut environment: EnvironmentFn = dummy::environment;
 // Higher level helper functions
 //*******************************
 
-pub fn frame_done(frame: [u16; 160*144]) {
+pub fn gl_frame_done(width: u16, height: u16) {
     unsafe {
-        let data = frame.as_ptr() as *const c_void;
-
-        video_refresh(data, 160, 144, 160 * 2);
+        // When using a hardware renderer we set the data pointer to
+        // -1 to notify the frontend that the frame has been rendered
+        // in the framebuffer.
+        video_refresh(-1isize as *const _, width as c_uint, height as c_uint, 0);
     }
 }
 

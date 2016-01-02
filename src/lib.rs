@@ -45,6 +45,19 @@ impl Context {
 impl libretro::Context for Context {
 
     fn render_frame(&mut self) {
+        match self.retrogl.state() {
+            Some(s) => {
+                if let Err(e) = s.render_frame() {
+                    error!("Couldn't render frame: {:?}", e);
+                }
+            }
+            None => {
+                error!("Frame requested while we have no RetroGL state!");
+                return;
+            }
+        }
+
+        libretro::gl_frame_done(self.retrogl.xres(), self.retrogl.yres())
     }
 
     fn get_system_av_info(&self) -> libretro::SystemAvInfo {

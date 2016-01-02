@@ -1,73 +1,77 @@
-use gl;
-use gl::types::{GLint, GLuint, GLenum};
+use std::ffi::CString;
 
+use gl;
+use gl::types::{GLint, GLuint};
+
+use retrogl::shader::Shader;
 use retrogl::error::{Error, error_or};
 
-pub struct Shader {
+pub struct Program {
     id: GLuint,
 }
 
-impl Shader {
-    pub fn new(source: &str, shader_type: ShaderType) -> Result<Shader, Error> {
-        let id = unsafe { gl::CreateShader(shader_type.into_gl()) };
+impl Program {
+    pub fn new(vertex_shader: Shader,
+               fragment_shader: Shader) -> Result<Program, Error> {
+        let id = unsafe { gl::CreateProgram() };
 
-        unsafe {
-            gl::ShaderSource(id,
-                             1,
-                             [source.as_ptr()].as_ptr() as *const *const _,
-                             [source.len() as GLint].as_ptr());
-            gl::CompileShader(id);
-        }
+        vertex_shader.attach_to(id);
+        fragment_shader.attach_to(id);
 
-        // Check if the compilation was successful
+        unsafe { gl::LinkProgram(id) };
+
+        vertex_shader.detach_from(id);
+        fragment_shader.detach_from(id);
+
+        // Check if the program linking was successful
         let mut status = gl::FALSE as GLint;
-        unsafe { gl::GetShaderiv(id, gl::COMPILE_STATUS, &mut status) };
+        unsafe { gl::GetProgramiv(id, gl::LINK_STATUS, &mut status) };
 
         if status == gl::TRUE as GLint {
             // There shouldn't be anything in glGetError but let's
             // check to make sure.
-            error_or(Shader {
-                id: id,
-            })
+            error_or(Program { id: id })
         } else {
-            error!("{:?} shader compilation failed:\n{}", shader_type, source);
+            error!("OpenGL program linking failed");
 
-            match get_shader_info_log(id) {
-                Some(s) => error!("Shader info log:\n{}", s),
-                None => error!("No shader info log")
+            match get_program_info_log(id) {
+                Some(s) => error!("Program info log:\n{}", s),
+                None => error!("No program info log")
             }
 
-            Err(Error::BadShader(shader_type))
+            Err(Error::BadProgram)
         }
+    }
+
+    pub fn find_attribute(&self, attr: &str) -> Result<GLuint, Error> {
+        let cstr = CString::new(attr).unwrap();
+
+        let index = unsafe { gl::GetAttribLocation(self.id, cstr.as_ptr()) };
+
+        if index < 0 {
+            error!("Couldn't find attribute {} in program", attr);
+            return Err(Error::InvalidValue);
+        }
+
+        error_or(index as GLuint)
+    }
+
+    pub fn bind(&self) {
+        unsafe { gl::UseProgram(self.id) };
     }
 }
 
-impl Drop for Shader {
+impl Drop for Program {
     fn drop(&mut self) {
-        unsafe { gl::DeleteShader(self.id) };
+        unsafe { gl::DeleteProgram(self.id) };
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ShaderType {
-    Vertex,
-    Fragment,
-}
-
-impl ShaderType {
-    fn into_gl(self) -> GLenum {
-        match self {
-            ShaderType::Vertex => gl::VERTEX_SHADER,
-            ShaderType::Fragment => gl::FRAGMENT_SHADER,
-        }
-    }
-}
-
-pub fn get_shader_info_log(id: GLuint) -> Option<String> {
+fn get_program_info_log(id: GLuint) -> Option<String> {
     let mut log_len = 0 as GLint;
 
     unsafe {
-        gl::GetShaderiv(id, gl::INFO_LOG_LENGTH, &mut log_len);
+        gl::GetProgramiv(id, gl::INFO_LOG_LENGTH, &mut log_len);
     }
 
     if log_len <= 0 {
@@ -77,10 +81,10 @@ pub fn get_shader_info_log(id: GLuint) -> Option<String> {
     let mut log = vec![0u8; log_len as usize];
 
     unsafe {
-        gl::GetShaderInfoLog(id,
-                             log_len,
-                             &mut log_len,
-                             log.as_mut_ptr() as *mut _);
+        gl::GetProgramInfoLog(id,
+                              log_len,
+                              &mut log_len,
+                              log.as_mut_ptr() as *mut _);
     }
 
     if log_len <= 0 {
