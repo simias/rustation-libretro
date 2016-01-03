@@ -26,13 +26,13 @@ pub struct RetroGl {
 }
 
 impl RetroGl {
-    pub fn new() -> Option<RetroGl> {
+    pub fn new() -> Result<RetroGl, ()> {
         if !libretro::hw_context::init() {
             error!("Failed to init hardware context");
-            return None;
+            return Err(());
         }
 
-        Some(RetroGl {
+        Ok(RetroGl {
             xres: 640,
             yres: 480,
             // Wait until `context_reset` is called

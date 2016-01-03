@@ -13,7 +13,7 @@
 use std::ptr;
 use std::ffi::CStr;
 use libc::{c_void, c_char, c_uint, c_float, c_double, size_t, int16_t};
-use std::path::Path;
+use std::path::PathBuf;
 
 pub trait Context {
     fn render_frame(&mut self);
@@ -110,6 +110,7 @@ pub struct Variable {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
+    GetSystemDirectory = 9,
     SetHwRender = 14,
     GetVariable = 15,
     SetVariables = 16,
@@ -379,6 +380,24 @@ pub fn button_pressed(b: JoyPadButton) -> bool {
     }
 }
 
+pub fn get_system_directory() -> Option<PathBuf> {
+    let mut path: *const c_char = ptr::null();
+
+    let success =
+        unsafe {
+            call_environment(Environment::GetSystemDirectory,
+                             &mut path)
+        };
+
+    if success && !path.is_null() {
+        let path = unsafe { CStr::from_ptr(path) };
+
+        build_path(path)
+    } else {
+        None
+    }
+}
+
 unsafe fn call_environment<T>(which: Environment, var: &mut T) -> bool {
     environment(which as c_uint, var as *mut _ as *mut c_void)
 }
@@ -533,11 +552,15 @@ pub extern "C" fn retro_load_game(info: *const GameInfo) -> bool {
         return false;
     }
 
-    let path = unsafe {
-        CStr::from_ptr(info.path)
-    }.to_str().unwrap();
+    let path = unsafe { CStr::from_ptr(info.path) };
 
-    match ::load_game(Path::new(path)) {
+    let path =
+        match build_path(path) {
+            Some(p) => p,
+            None => return false,
+        };
+
+    match ::load_game(path) {
         Some(c) => {
             unsafe {
                 set_context(c);
@@ -629,6 +652,36 @@ pub mod dummy {
 
         fn gl_context_destroy(&mut self) {
             panic!("Called context_destroy with no context!");
+        }
+    }
+}
+
+/// Build a PathBuf from a C-string provided by the frontend. If the
+/// C-string doesn't contain a valid Path encoding return
+/// "None". `c_str` *must* be a valid pointer to a C-string.
+#[cfg(unix)]
+fn build_path(cstr: &CStr) -> Option<PathBuf> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    // On unix I assume that the path is an arbitrary null-terminated
+    // byte string
+    Some(PathBuf::from(OsStr::from_bytes(cstr.to_bytes())))
+}
+
+/// Build a PathBuf from a C-string provided by the frontend. If the
+/// C-string doesn't contain a valid Path encoding return
+/// "None". `c_str` *must* be a valid pointer to a C-string.
+#[cfg(not(unix))]
+fn build_path(cstr: &CStr) -> Option<PathBuf> {
+    // On Windows and other non-unices I assume that the path is utf-8
+    // encoded
+    match cstr.to_str() {
+        Ok(s) => Some(PathBuf::From(s)),
+        Err(e) => {
+            error!("The frontend gave us an invalid path: {}",
+                   cstr.to_string_lossy());
+            None
         }
     }
 }
