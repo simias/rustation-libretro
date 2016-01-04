@@ -8,8 +8,13 @@ use std::io::Read;
 
 use libc::{c_char, c_uint};
 
-use rustation::{Disc, Region};
+use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
+use rustation::gpu::{Gpu, VideoStandard};
+use rustation::memory::Interconnect;
+use rustation::cpu::Cpu;
+use rustation::debugger::Debugger;
+
 
 extern crate libc;
 extern crate gl;
@@ -35,6 +40,8 @@ const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
 /// Emulator context
 struct Context {
     retrogl: retrogl::RetroGl,
+    cpu: Cpu,
+    debugger: Debugger,
 }
 
 impl Context {
@@ -53,7 +60,7 @@ impl Context {
 
         info!("Detected disc region: {:?}", region);
 
-        let _bios =
+        let bios =
             match find_bios(region) {
                 Some(b) => b,
                 None => {
@@ -62,10 +69,25 @@ impl Context {
                 }
             };
 
+        let video_standard =
+            match region {
+                Region::Europe => VideoStandard::Pal,
+                Region::NorthAmerica => VideoStandard::Ntsc,
+                Region::Japan => VideoStandard::Ntsc,
+            };
+
         let retrogl = try!(retrogl::RetroGl::new());
+
+        let gpu = Gpu::new(video_standard);
+        let inter = Interconnect::new(bios, gpu, Some(disc));
+        let cpu = Cpu::new(inter);
+
+        let debugger = Debugger::new();
 
         Ok(Context {
             retrogl: retrogl,
+            cpu: cpu,
+            debugger: debugger,
         })
     }
 }
@@ -113,7 +135,7 @@ impl libretro::Context for Context {
     }
 }
 
-/// Init function, called only once when our core gets loaded
+/// Init function, garanteed called only once (unlike `retro_init`)
 fn init() {
     retrolog::init();
 }

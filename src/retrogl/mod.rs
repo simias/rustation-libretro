@@ -33,8 +33,8 @@ impl RetroGl {
         }
 
         Ok(RetroGl {
-            xres: 640,
-            yres: 480,
+            xres: 1024,
+            yres: 512,
             // Wait until `context_reset` is called
             state: None,
         })
@@ -129,7 +129,7 @@ impl State {
 
         unsafe {
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo);
-            gl::Viewport(0, 0, 640, 480);
+            gl::Viewport(0, 0, 1024, 512);
         }
 
         unsafe {

@@ -472,9 +472,20 @@ pub extern "C" fn retro_set_input_state(callback: InputStateFn) {
     }
 }
 
+static mut first_init: bool = true;
+
 #[no_mangle]
 pub extern "C" fn retro_init() {
-    ::init()
+    // retro_init can potentially be called several times even if the
+    // library hasn't been unloaded (statics are not reset etc...)
+    // which makes it rather useless in my opinion. Let's change that.
+
+    unsafe {
+        if first_init {
+            ::init();
+            first_init = false;
+        }
+    }
 }
 
 #[no_mangle]
