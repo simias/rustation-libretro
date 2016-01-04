@@ -73,6 +73,7 @@ impl RetroGl {
 
 pub struct State {
     buffer: DrawBuffer<(f32, f32)>,
+    frame: u32,
 }
 
 impl State {
@@ -92,10 +93,13 @@ impl State {
 
         Ok(State {
             buffer: buffer,
+            frame: 0,
         })
     }
 
     pub fn render_frame(&mut self) -> Result<(), Error> {
+
+        self.frame = self.frame.wrapping_add(1);
 
         let r = self.do_render_frame();
 
@@ -116,6 +120,10 @@ impl State {
                                       (1., -1.),
                                       ]));
 
+        let c = ((self.frame % 0xff) as f32) / 255.;
+
+        try!(self.buffer.program().uniform3f("color", c, 0.5, 0.8));
+
         // Bind the output framebuffer provided by the frontend
         let fbo = libretro::hw_context::get_current_framebuffer() as GLuint;
 
@@ -125,7 +133,7 @@ impl State {
         }
 
         unsafe {
-            gl::ClearColor(0.3, 0.4, 0.5, 1.0);
+            gl::ClearColor(0.3, 0.4, c, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 

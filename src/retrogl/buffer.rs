@@ -81,6 +81,10 @@ impl<T> DrawBuffer<T> {
         get_error()
     }
 
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
+
     /// Orphan the buffer (to avoid synchronization) and allocate a
     /// new one.
     ///

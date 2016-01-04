@@ -18,6 +18,8 @@ pub enum Error {
     BadShader(ShaderType),
     /// When program linking fails
     BadProgram,
+    /// When using a bad/unknown uniform
+    BadUniform,
 }
 
 pub fn get_error() -> Result<(), Error> {
