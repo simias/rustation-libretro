@@ -13,8 +13,7 @@ use rustation::bios::{Bios, BIOS_SIZE};
 use rustation::gpu::{Gpu, VideoStandard};
 use rustation::memory::Interconnect;
 use rustation::cpu::Cpu;
-use rustation::debugger::Debugger;
-
+use rustation::shared::SharedState;
 
 extern crate libc;
 extern crate gl;
@@ -41,7 +40,7 @@ const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
 struct Context {
     retrogl: retrogl::RetroGl,
     cpu: Cpu,
-    debugger: Debugger,
+    shared_state: SharedState,
 }
 
 impl Context {
@@ -82,12 +81,12 @@ impl Context {
         let inter = Interconnect::new(bios, gpu, Some(disc));
         let cpu = Cpu::new(inter);
 
-        let debugger = Debugger::new();
+        let shared_state = SharedState::new();
 
         Ok(Context {
             retrogl: retrogl,
             cpu: cpu,
-            debugger: debugger,
+            shared_state: shared_state,
         })
     }
 }
@@ -95,6 +94,9 @@ impl Context {
 impl libretro::Context for Context {
 
     fn render_frame(&mut self) {
+        self.cpu.run_next_instruction(&mut self.shared_state,
+                                      &mut self.retrogl);
+
         match self.retrogl.state() {
             Some(s) => {
                 if let Err(e) = s.render_frame() {
@@ -135,7 +137,7 @@ impl libretro::Context for Context {
     }
 }
 
-/// Init function, garanteed called only once (unlike `retro_init`)
+/// Init function, guaranteed called only once (unlike `retro_init`)
 fn init() {
     retrolog::init();
 }

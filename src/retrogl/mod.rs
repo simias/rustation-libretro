@@ -3,6 +3,7 @@
 use libretro;
 use gl;
 use gl::types::GLuint;
+use rustation::gpu::renderer::Renderer;
 
 use self::buffer::DrawBuffer;
 use self::error::Error;
@@ -140,5 +141,10 @@ impl State {
         try!(self.buffer.draw_triangles());
 
         self.buffer.clear()
+    }
+}
+
+impl Renderer for RetroGl {
+    fn push_triangle(&mut self) {
     }
 }
