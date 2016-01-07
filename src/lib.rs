@@ -94,20 +94,12 @@ impl Context {
 impl libretro::Context for Context {
 
     fn render_frame(&mut self) {
-        self.cpu.run_next_instruction(&mut self.shared_state,
-                                      &mut self.retrogl);
+        let cpu = &mut self.cpu;
+        let shared_state = &mut self.shared_state;
 
-        match self.retrogl.state() {
-            Some(s) => {
-                if let Err(e) = s.render_frame() {
-                    error!("Couldn't render frame: {:?}", e);
-                }
-            }
-            None => {
-                error!("Frame requested while we have no RetroGL state!");
-                return;
-            }
-        }
+        self.retrogl.render_frame(|renderer| {
+            cpu.run_next_instruction(shared_state, renderer);
+        });
 
         libretro::gl_frame_done(self.retrogl.xres(), self.retrogl.yres())
     }
