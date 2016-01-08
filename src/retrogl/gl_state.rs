@@ -1,8 +1,8 @@
 use gl;
-use gl::types::GLuint;
+use gl::types::{GLuint, GLint};
 use rustation::gpu::renderer::{Renderer, Vertex};
 
-use retrogl::State;
+use retrogl::{State, DrawConfig};
 use retrogl::error::Error;
 use retrogl::buffer::DrawBuffer;
 use retrogl::shader::{Shader, ShaderType};
@@ -12,13 +12,11 @@ use libretro;
 
 pub struct GlState {
     buffer: DrawBuffer<Vertex>,
-    frame: u32,
-    xres: u16,
-    yres: u16,
+    config: DrawConfig,
 }
 
 impl GlState {
-    pub fn from_state(state: &State) -> Result<GlState, Error> {
+    pub fn from_config(config: DrawConfig) -> Result<GlState, Error> {
         info!("Building OpenGL state");
 
         let vs = try!(Shader::new(include_str!("shaders/vertex.glsl"),
@@ -33,15 +31,17 @@ impl GlState {
 
         Ok(GlState {
             buffer: buffer,
-            frame: 0,
-            xres: state.xres(),
-            yres: state.yres(),
+            config: config,
         })
     }
 
     fn draw(&mut self) -> Result<(), Error> {
 
-        //try!(self.buffer.program().uniform3f("offset", 1.0, 0., 0.));
+        let (x, y) = self.config.draw_offset;
+
+        try!(self.buffer.program().uniform2i("offset",
+                                             x as GLint,
+                                             y as GLint));
 
         try!(self.buffer.draw_triangles());
 
@@ -50,12 +50,8 @@ impl GlState {
 }
 
 impl State for GlState {
-    fn xres(&self) -> u16 {
-        self.xres
-    }
-
-    fn yres(&self) -> u16 {
-        self.yres
+    fn draw_config(&self) -> &DrawConfig {
+        &self.config
     }
 
     fn renderer_mut(&mut self) -> &mut Renderer {
@@ -68,7 +64,10 @@ impl State for GlState {
 
         unsafe {
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo);
-            gl::Viewport(0, 0, self.xres as i32, self.yres as i32);
+            gl::Viewport(0,
+                         0,
+                         self.config.xres as i32,
+                         self.config.yres as i32);
         }
 
         unsafe {
@@ -79,7 +78,7 @@ impl State for GlState {
 
     fn display(&mut self) {
         if let Err(e) = self.draw() {
-            error!("Render frame failed: {:?}", e);
+            panic!("Render frame failed: {:?}", e);
         }
     }
 
@@ -94,10 +93,15 @@ impl State for GlState {
 }
 
 impl Renderer for GlState {
+    fn set_draw_offset(&mut self, x: i16, y: i16) {
+        self.config.draw_offset = (x, y)
+    }
+
     fn push_triangle(&mut self, vertices: &[Vertex; 3]) {
         if self.buffer.remaining_capacity() < 3 {
             self.draw().unwrap();
         }
+        
 
         self.buffer.push_slice(vertices).unwrap();
     }

@@ -3,11 +3,16 @@
 in ivec2 coords;
 in uvec3 color;
 
+// Drawing offset
+uniform ivec2 offset;
+
 out vec3 frag_shading_color;
 
 void main() {
-  float x = (float(coords.x) / 512.) - 1.;
-  float y = 1. - (float(coords.y) / 256.);
+  ivec2 pos = coords + offset;
+
+  float x = (float(pos.x) / 512.) - 1.;
+  float y = 1. - (float(pos.y) / 256.);
 
   frag_shading_color = vec3(color) / 255.;
 

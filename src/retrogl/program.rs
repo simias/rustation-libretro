@@ -80,15 +80,14 @@ impl Program {
         e
     }
 
-    pub fn uniform3f(&self,
+    pub fn uniform2i(&self,
                      name: &str,
-                     a: f32,
-                     b: f32,
-                     c: f32) -> Result<(), Error> {
+                     a: GLint,
+                     b: GLint) -> Result<(), Error> {
         self.bind();
 
         self.uniform(name)
-            .map(|u| unsafe { gl::Uniform3f(u, a, b, c) })
+            .map(|u| unsafe { gl::Uniform2i(u, a, b) })
     }
 }
 
