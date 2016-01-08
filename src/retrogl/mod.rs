@@ -42,7 +42,7 @@ impl RetroGl {
 
         match GlState::from_state(self.state()) {
             Ok(s) => self.state = Box::new(s),
-            Err(e) => error!("Couldn't create RetroGL state: {:?}", e),
+            Err(e) => panic!("Couldn't create RetroGL state: {:?}", e),
         }
     }
 
@@ -69,6 +69,8 @@ impl RetroGl {
 
         emulate(self.state.renderer_mut());
 
+        self.state.display();
+
         self.state.cleanup_render();
     }
 }
@@ -78,6 +80,7 @@ pub trait State: Renderer {
     fn yres(&self) -> u16;
 
     fn prepare_render(&mut self);
+    fn display(&mut self);
     fn cleanup_render(&mut self);
 
     fn renderer_mut(&mut self) -> &mut Renderer;

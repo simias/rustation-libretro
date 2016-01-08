@@ -1,4 +1,4 @@
-use rustation::gpu::renderer::Renderer;
+use rustation::gpu::renderer::{Renderer, Vertex};
 use retrogl::State;
 
 /// RetroGL state when no OpenGL context is available. It just holds
@@ -43,14 +43,14 @@ impl State for DummyState {
 
     fn cleanup_render(&mut self) {
     }
+
+    fn display(&mut self) {
+    }
+
 }
 
 impl Renderer for DummyState {
-    fn push_triangle(&mut self) {
+    fn push_triangle(&mut self, _: &[Vertex; 3]) {
         warn!("Dummy push_triangle called");
-    }
-
-    fn display(&mut self) {
-        warn!("Dummy display called");
     }
 }

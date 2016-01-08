@@ -3,7 +3,7 @@ use std::mem::size_of;
 use std::ptr;
 
 use gl;
-use gl::types::{GLuint, GLsizeiptr, GLintptr, GLsizei};
+use gl::types::{GLint, GLuint, GLsizeiptr, GLintptr, GLsizei};
 
 use retrogl::error::{Error, error_or, get_error};
 use retrogl::vertex::VertexArrayObject;
@@ -70,12 +70,25 @@ impl<T> DrawBuffer<T> {
         // This captures the buffer so that we don't have to bind it
         // when we draw later on, we'll just have to bind the vao.
         unsafe {
-            gl::VertexAttribPointer(attr,
-                                    2,
-                                    gl::FLOAT,
-                                    gl::FALSE,
-                                    0,
-                                    ptr::null())
+            gl::VertexAttribIPointer(attr,
+                                     2,
+                                     gl::SHORT,
+                                     size_of::<T>() as GLint,
+                                     0 as *const _)
+        }
+
+        let attr = try!(self.program.find_attribute("color"));
+
+        unsafe { gl::EnableVertexAttribArray(attr) };
+
+        // This captures the buffer so that we don't have to bind it
+        // when we draw later on, we'll just have to bind the vao.
+        unsafe {
+            gl::VertexAttribIPointer(attr,
+                                     3,
+                                     gl::BYTE,
+                                     size_of::<T>() as GLint,
+                                     4 as *const _)
         }
 
         get_error()

@@ -98,7 +98,7 @@ impl libretro::Context for Context {
         let shared_state = &mut self.shared_state;
 
         self.retrogl.render_frame(|renderer| {
-            cpu.run_next_instruction(shared_state, renderer);
+            cpu.run_until_next_frame(shared_state, renderer);
         });
 
         libretro::gl_frame_done(self.retrogl.xres(), self.retrogl.yres())

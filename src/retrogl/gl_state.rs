@@ -1,6 +1,6 @@
 use gl;
 use gl::types::GLuint;
-use rustation::gpu::renderer::Renderer;
+use rustation::gpu::renderer::{Renderer, Vertex};
 
 use retrogl::State;
 use retrogl::error::Error;
@@ -11,7 +11,7 @@ use retrogl::program::Program;
 use libretro;
 
 pub struct GlState {
-    buffer: DrawBuffer<(f32, f32)>,
+    buffer: DrawBuffer<Vertex>,
     frame: u32,
     xres: u16,
     yres: u16,
@@ -29,7 +29,7 @@ impl GlState {
 
         let program = try!(Program::new(vs, fs));
 
-        let buffer = try!(DrawBuffer::new(128, program));
+        let buffer = try!(DrawBuffer::new(1024, program));
 
         Ok(GlState {
             buffer: buffer,
@@ -39,16 +39,9 @@ impl GlState {
         })
     }
 
-    fn render_frame(&mut self) -> Result<(), Error> {
+    fn draw(&mut self) -> Result<(), Error> {
 
-        try!(self.buffer.push_slice(&[(0., 1.),
-                                      (-1., -1.),
-                                      (1., -1.),
-                                      ]));
-
-        let c = ((self.frame % 0xff) as f32) / 255.;
-
-        try!(self.buffer.program().uniform3f("color", c, 0.5, 0.8));
+        //try!(self.buffer.program().uniform3f("offset", 1.0, 0., 0.));
 
         try!(self.buffer.draw_triangles());
 
@@ -75,12 +68,18 @@ impl State for GlState {
 
         unsafe {
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo);
-            gl::Viewport(0, 0, 1024, 512);
+            gl::Viewport(0, 0, self.xres as i32, self.yres as i32);
         }
 
         unsafe {
-            gl::ClearColor(0.3, 0.4, 0.8, 1.0);
+            gl::ClearColor(0., 0., 0., 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+    }
+
+    fn display(&mut self) {
+        if let Err(e) = self.draw() {
+            error!("Render frame failed: {:?}", e);
         }
     }
 
@@ -95,13 +94,11 @@ impl State for GlState {
 }
 
 impl Renderer for GlState {
-    fn push_triangle(&mut self) {
-        warn!("GL push_triangle called");
-    }
-
-    fn display(&mut self) {
-        if let Err(e) = self.render_frame() {
-            error!("Render frame failed: {:?}", e);
+    fn push_triangle(&mut self, vertices: &[Vertex; 3]) {
+        if self.buffer.remaining_capacity() < 3 {
+            self.draw().unwrap();
         }
+
+        self.buffer.push_slice(vertices).unwrap();
     }
 }
