@@ -86,7 +86,7 @@ impl<T> DrawBuffer<T> {
         unsafe {
             gl::VertexAttribIPointer(attr,
                                      3,
-                                     gl::BYTE,
+                                     gl::UNSIGNED_BYTE,
                                      size_of::<T>() as GLint,
                                      4 as *const _)
         }

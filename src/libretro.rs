@@ -111,6 +111,7 @@ pub struct Variable {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
     GetSystemDirectory = 9,
+    SetPixelFormat = 10,
     SetHwRender = 14,
     GetVariable = 15,
     SetVariables = 16,
@@ -148,6 +149,13 @@ pub enum JoyPadButton {
     R2 = 13,
     L3 = 14,
     R3 = 15,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PixelFormat {
+    Xrgb1555 = 0,
+    Xrgb8888 = 1,
+    Rgb565 = 2,
 }
 
 pub mod hw_context {
@@ -395,6 +403,14 @@ pub fn get_system_directory() -> Option<PathBuf> {
         build_path(path)
     } else {
         None
+    }
+}
+
+pub fn set_pixel_format(format: PixelFormat) -> bool {
+    let mut f = format as c_uint;
+
+    unsafe {
+        call_environment(Environment::SetPixelFormat, &mut f)
     }
 }
 

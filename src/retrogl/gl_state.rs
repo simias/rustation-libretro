@@ -101,8 +101,16 @@ impl Renderer for GlState {
         if self.buffer.remaining_capacity() < 3 {
             self.draw().unwrap();
         }
-        
 
         self.buffer.push_slice(vertices).unwrap();
+    }
+
+    fn push_quad(&mut self, vertices: &[Vertex; 4]) {
+        if self.buffer.remaining_capacity() < 6 {
+            self.draw().unwrap();
+        }
+
+        self.buffer.push_slice(&vertices[0..3]).unwrap();
+        self.buffer.push_slice(&vertices[1..4]).unwrap();
     }
 }

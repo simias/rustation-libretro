@@ -43,4 +43,8 @@ impl Renderer for DummyState {
     fn push_triangle(&mut self, _: &[Vertex; 3]) {
         warn!("Dummy push_triangle called");
     }
+
+    fn push_quad(&mut self, _: &[Vertex; 4]) {
+        warn!("Dummy push_quad called");
+    }
 }

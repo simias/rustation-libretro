@@ -21,6 +21,11 @@ pub struct RetroGl {
 
 impl RetroGl {
     pub fn new() -> Result<RetroGl, ()> {
+        if !libretro::set_pixel_format(libretro::PixelFormat::Xrgb8888) {
+            error!("Can't set pixel format");
+            return Err(());
+        }
+
         if !libretro::hw_context::init() {
             error!("Failed to init hardware context");
             return Err(());
