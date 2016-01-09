@@ -21,10 +21,10 @@ impl GlState {
     pub fn from_config(config: DrawConfig) -> Result<GlState, Error> {
         info!("Building OpenGL state");
 
-        let vs = try!(Shader::new(include_str!("shaders/vertex.glsl"),
+        let vs = try!(Shader::new(include_str!("shaders/command_vertex.glsl"),
                                   ShaderType::Vertex));
 
-        let fs = try!(Shader::new(include_str!("shaders/fragment.glsl"),
+        let fs = try!(Shader::new(include_str!("shaders/command_fragment.glsl"),
                                   ShaderType::Fragment));
 
         let program = try!(Program::new(vs, fs));
