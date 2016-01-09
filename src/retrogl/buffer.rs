@@ -6,8 +6,9 @@ use gl;
 use gl::types::{GLint, GLuint, GLsizeiptr, GLintptr, GLsizei};
 
 use retrogl::error::{Error, error_or, get_error};
-use retrogl::vertex::VertexArrayObject;
+use retrogl::vertex::{Vertex, VertexArrayObject};
 use retrogl::program::Program;
+use retrogl::types::Kind;
 
 pub struct DrawBuffer<T> {
     /// Vertex Array Object containing the bindings for this
@@ -26,7 +27,7 @@ pub struct DrawBuffer<T> {
     len: usize,
 }
 
-impl<T> DrawBuffer<T> {
+impl<T: Vertex> DrawBuffer<T> {
 
     pub fn new(capacity: usize,
                program: Program) -> Result<DrawBuffer<T>, Error> {
@@ -63,36 +64,52 @@ impl<T> DrawBuffer<T> {
         // ARRAY_BUFFER is captured by VertexAttribPointer
         self.bind();
 
-        let attr = try!(self.program.find_attribute("coords"));
+        let attributes = T::attributes();
 
-        unsafe { gl::EnableVertexAttribArray(attr) };
+        let element_size = size_of::<T>() as GLint;
 
-        // This captures the buffer so that we don't have to bind it
-        // when we draw later on, we'll just have to bind the vao.
-        unsafe {
-            gl::VertexAttribIPointer(attr,
-                                     2,
-                                     gl::SHORT,
-                                     size_of::<T>() as GLint,
-                                     0 as *const _)
-        }
+        for attr in attributes {
 
-        let attr = try!(self.program.find_attribute("color"));
+            let index = try!(self.program.find_attribute(attr.name));
 
-        unsafe { gl::EnableVertexAttribArray(attr) };
+            unsafe { gl::EnableVertexAttribArray(index) };
 
-        // This captures the buffer so that we don't have to bind it
-        // when we draw later on, we'll just have to bind the vao.
-        unsafe {
-            gl::VertexAttribIPointer(attr,
-                                     3,
-                                     gl::UNSIGNED_BYTE,
-                                     size_of::<T>() as GLint,
-                                     4 as *const _)
+            // This captures the buffer so that we don't have to bind it
+            // when we draw later on, we'll just have to bind the vao.
+            match Kind::from_type(attr.ty) {
+                Kind::Integer =>
+                    unsafe {
+                        gl::VertexAttribIPointer(index,
+                                                 attr.components,
+                                                 attr.ty,
+                                                 element_size,
+                                                 attr.gl_offset())
+                    },
+                Kind::Float =>
+                    unsafe {
+                        gl::VertexAttribPointer(index,
+                                                attr.components,
+                                                attr.ty,
+                                                gl::FALSE,
+                                                element_size,
+                                                attr.gl_offset())
+                    },
+                Kind::Double =>
+                    unsafe {
+                        gl::VertexAttribLPointer(index,
+                                                 attr.components,
+                                                 attr.ty,
+                                                 element_size,
+                                                 attr.gl_offset())
+                    },
+            }
         }
 
         get_error()
     }
+}
+
+impl<T> DrawBuffer<T> {
 
     pub fn program(&self) -> &Program {
         &self.program

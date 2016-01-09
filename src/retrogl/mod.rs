@@ -7,9 +7,11 @@ use rustation::gpu::renderer::Renderer;
 use self::dummy_state::DummyState;
 use self::gl_state::GlState;
 
-mod error;
-mod buffer;
+#[macro_use]
 mod vertex;
+mod error;
+mod types;
+mod buffer;
 mod shader;
 mod program;
 mod dummy_state;

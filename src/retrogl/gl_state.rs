@@ -7,11 +7,12 @@ use retrogl::error::Error;
 use retrogl::buffer::DrawBuffer;
 use retrogl::shader::{Shader, ShaderType};
 use retrogl::program::Program;
+use retrogl::types::GlType;
 
 use libretro;
 
 pub struct GlState {
-    buffer: DrawBuffer<Vertex>,
+    buffer: DrawBuffer<CommandVertex>,
     config: DrawConfig,
 }
 
@@ -102,7 +103,11 @@ impl Renderer for GlState {
             self.draw().unwrap();
         }
 
-        self.buffer.push_slice(vertices).unwrap();
+        let v: Vec<_> =
+            vertices.iter().map(|v| CommandVertex::from_vertex(v))
+            .collect();
+
+        self.buffer.push_slice(&v).unwrap();
     }
 
     fn push_quad(&mut self, vertices: &[Vertex; 4]) {
@@ -110,7 +115,28 @@ impl Renderer for GlState {
             self.draw().unwrap();
         }
 
-        self.buffer.push_slice(&vertices[0..3]).unwrap();
-        self.buffer.push_slice(&vertices[1..4]).unwrap();
+        let v: Vec<_> =
+            vertices.iter().map(|v| CommandVertex::from_vertex(v))
+            .collect();
+
+        self.buffer.push_slice(&v[0..3]).unwrap();
+        self.buffer.push_slice(&v[1..4]).unwrap();
     }
 }
+
+#[derive(Default)]
+struct CommandVertex {
+    position: [i16; 2],
+    color: [u8; 3],
+}
+
+impl CommandVertex {
+    fn from_vertex(v: &Vertex) -> CommandVertex {
+        CommandVertex {
+            position: v.position(),
+            color: v.color(),
+        }
+    }
+}
+
+implement_vertex!(CommandVertex, position, color);

@@ -57,7 +57,7 @@ impl Program {
         let index = unsafe { gl::GetAttribLocation(self.id, cstr.as_ptr()) };
 
         if index < 0 {
-            error!("Couldn't find attribute {} in program", attr);
+            error!("Couldn't find attribute \"{}\" in program", attr);
             return Err(Error::InvalidValue);
         }
 
