@@ -20,6 +20,7 @@ extern crate gl;
 #[macro_use]
 extern crate log;
 extern crate rustation;
+extern crate arrayvec;
 
 macro_rules! cstring {
     ($x:expr) => {

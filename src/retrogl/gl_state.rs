@@ -1,5 +1,6 @@
 use gl;
 use gl::types::{GLuint, GLint};
+use arrayvec::ArrayVec;
 use rustation::gpu::renderer::{Renderer, Vertex};
 
 use retrogl::{State, DrawConfig};
@@ -103,7 +104,7 @@ impl Renderer for GlState {
             self.draw().unwrap();
         }
 
-        let v: Vec<_> =
+        let v: ArrayVec<[_; 3]> =
             vertices.iter().map(|v| CommandVertex::from_vertex(v))
             .collect();
 
@@ -115,7 +116,7 @@ impl Renderer for GlState {
             self.draw().unwrap();
         }
 
-        let v: Vec<_> =
+        let v: ArrayVec<[_; 4]> =
             vertices.iter().map(|v| CommandVertex::from_vertex(v))
             .collect();
 
