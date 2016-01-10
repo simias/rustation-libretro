@@ -1,7 +1,7 @@
 use gl;
 use gl::types::{GLuint, GLint};
 use arrayvec::ArrayVec;
-use rustation::gpu::renderer::{Renderer, Vertex};
+use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
 
 use retrogl::{State, DrawConfig};
 use retrogl::error::Error;
@@ -29,7 +29,7 @@ impl GlState {
 
         let program = try!(Program::new(vs, fs));
 
-        let buffer = try!(DrawBuffer::new(1024, program));
+        let buffer = try!(DrawBuffer::new(2048, program));
 
         Ok(GlState {
             buffer: buffer,
@@ -71,11 +71,6 @@ impl State for GlState {
                          self.config.xres as i32,
                          self.config.yres as i32);
         }
-
-        unsafe {
-            gl::ClearColor(0., 0., 0., 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-        }
     }
 
     fn display(&mut self) {
@@ -99,7 +94,15 @@ impl Renderer for GlState {
         self.config.draw_offset = (x, y)
     }
 
-    fn push_triangle(&mut self, vertices: &[Vertex; 3]) {
+    fn push_line(&mut self,
+                 _: &PrimitiveAttributes,
+                 _: &[Vertex; 2]) {
+        unimplemented!()
+    }
+
+    fn push_triangle(&mut self,
+                     _: &PrimitiveAttributes,
+                     vertices: &[Vertex; 3]) {
         if self.buffer.remaining_capacity() < 3 {
             self.draw().unwrap();
         }
@@ -111,7 +114,9 @@ impl Renderer for GlState {
         self.buffer.push_slice(&v).unwrap();
     }
 
-    fn push_quad(&mut self, vertices: &[Vertex; 4]) {
+    fn push_quad(&mut self,
+                 _: &PrimitiveAttributes,
+                 vertices: &[Vertex; 4]) {
         if self.buffer.remaining_capacity() < 6 {
             self.draw().unwrap();
         }
@@ -134,8 +139,8 @@ struct CommandVertex {
 impl CommandVertex {
     fn from_vertex(v: &Vertex) -> CommandVertex {
         CommandVertex {
-            position: v.position(),
-            color: v.color(),
+            position: v.position,
+            color: v.color,
         }
     }
 }
