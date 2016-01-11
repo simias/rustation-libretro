@@ -51,4 +51,8 @@ impl Renderer for DummyState {
     fn push_quad(&mut self, _: &PrimitiveAttributes, _: &[Vertex; 4]) {
         warn!("Dummy push_quad called");
     }
+
+    fn load_image(&mut self, _: (u16, u16), _: (u16, u16), _: &[u16]) {
+        warn!("Dummy load_image called");
+    }
 }

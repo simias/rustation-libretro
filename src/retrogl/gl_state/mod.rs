@@ -128,6 +128,13 @@ impl Renderer for GlState {
         self.buffer.push_slice(&v[0..3]).unwrap();
         self.buffer.push_slice(&v[1..4]).unwrap();
     }
+
+    fn load_image(&mut self,
+                  _top_left: (u16, u16),
+                  _resolution: (u16, u16),
+                  _pixel_buffer: &[u16]) {
+        // Implement me
+    }
 }
 
 #[derive(Default)]
