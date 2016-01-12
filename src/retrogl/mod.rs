@@ -37,6 +37,8 @@ impl RetroGl {
         let config = DrawConfig {
             xres: 1024,
             yres: 512,
+            draw_area_top_left: (0, 0),
+            draw_area_resolution: (0, 0),
             draw_offset: (0, 0),
         };
 
@@ -83,9 +85,7 @@ impl RetroGl {
 
         emulate(self.state.renderer_mut());
 
-        self.state.display();
-
-        self.state.cleanup_render();
+        self.state.finish();
     }
 }
 
@@ -93,8 +93,7 @@ pub trait State: Renderer {
     fn draw_config(&self) -> &DrawConfig;
 
     fn prepare_render(&mut self);
-    fn display(&mut self);
-    fn cleanup_render(&mut self);
+    fn finish(&mut self);
 
     fn renderer_mut(&mut self) -> &mut Renderer;
 }
@@ -104,4 +103,6 @@ pub struct DrawConfig {
     xres: u16,
     yres: u16,
     draw_offset: (i16, i16),
+    draw_area_top_left: (u16, u16),
+    draw_area_resolution: (u16, u16),
 }

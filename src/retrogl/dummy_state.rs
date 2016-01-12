@@ -28,16 +28,22 @@ impl State for DummyState {
     fn prepare_render(&mut self) {
     }
 
-    fn cleanup_render(&mut self) {
-    }
-
-    fn display(&mut self) {
+    fn finish(&mut self) {
     }
 }
 
 impl Renderer for DummyState {
     fn set_draw_offset(&mut self, x: i16, y: i16) {
         self.config.draw_offset = (x, y)
+    }
+
+    fn set_draw_area(&mut self, top_left: (u16, u16), resolution: (u16, u16)) {
+        self.config.draw_area_top_left = top_left;
+        self.config.draw_area_resolution = resolution;
+    }
+
+    fn load_image(&mut self, _: (u16, u16), _: (u16, u16), _: &[u16]) {
+        warn!("Dummy load_image called");
     }
 
     fn push_line(&mut self, _: &PrimitiveAttributes, _: &[Vertex; 2]) {
@@ -50,9 +56,5 @@ impl Renderer for DummyState {
 
     fn push_quad(&mut self, _: &PrimitiveAttributes, _: &[Vertex; 4]) {
         warn!("Dummy push_quad called");
-    }
-
-    fn load_image(&mut self, _: (u16, u16), _: (u16, u16), _: &[u16]) {
-        warn!("Dummy load_image called");
     }
 }

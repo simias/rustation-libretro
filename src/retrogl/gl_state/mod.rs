@@ -1,5 +1,5 @@
 use gl;
-use gl::types::{GLuint, GLint};
+use gl::types::{GLuint, GLint, GLsizei};
 use arrayvec::ArrayVec;
 use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
 use rustation::gpu::renderer::{TextureDepth, BlendMode};
@@ -106,6 +106,15 @@ impl GlState {
 
         self.command_buffer.clear()
     }
+
+    fn apply_scissor(&mut self) {
+        let (x, y) = self.config.draw_area_top_left;
+        let (w, h) = self.config.draw_area_resolution;
+
+        unsafe {
+            gl::Scissor(x as GLint, y as GLint, w as GLsizei, h as GLsizei);
+        }
+    }
 }
 
 impl State for GlState {
@@ -128,18 +137,24 @@ impl State for GlState {
                          self.config.xres as i32,
                          self.config.yres as i32);
             gl::Enable(gl::BLEND);
+            gl::Enable(gl::SCISSOR_TEST);
+
+            self.apply_scissor();
         }
 
         // Bind `fb_texture` to texture unit 0
         self.fb_texture.bind(gl::TEXTURE0);
     }
 
-    fn display(&mut self) {
+    fn finish(&mut self) {
+        // Draw pending commands
         self.draw().unwrap();
 
+
+        // Draw VRAM insert
         unsafe {
             // Enable alpha blending for the VRAM display
-            gl::Enable(gl::BLEND);
+            gl::Disable(gl::SCISSOR_TEST);
             gl::BlendColor(0., 0., 0., 0.7);
             gl::BlendEquationSeparate(gl::FUNC_ADD, gl::FUNC_ADD);
             gl::BlendFuncSeparate(gl::CONSTANT_ALPHA,
@@ -150,9 +165,7 @@ impl State for GlState {
 
         self.output_buffer.program().uniform1i("fb", 0).unwrap();
         self.output_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
-    }
 
-    fn cleanup_render(&mut self) {
         // Cleanup OpenGL context before returning to the frontend
         unsafe {
             gl::Disable(gl::BLEND);
@@ -175,6 +188,17 @@ impl Renderer for GlState {
     fn set_draw_offset(&mut self, x: i16, y: i16) {
         self.config.draw_offset = (x, y)
     }
+
+    fn set_draw_area(&mut self, top_left: (u16, u16), resolution: (u16, u16)) {
+        // Finish drawing anything in the current area
+        self.draw().unwrap();
+
+        self.config.draw_area_top_left = top_left;
+        self.config.draw_area_resolution = resolution;
+
+        self.apply_scissor();
+    }
+
 
     fn push_line(&mut self,
                  _: &PrimitiveAttributes,
