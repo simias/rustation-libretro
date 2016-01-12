@@ -2,7 +2,6 @@
 
 // We're sampling from the internal framebuffer texture
 uniform sampler2D fb;
-uniform float alpha;
 // Framebuffer sampling: 0: Normal 16bpp mode, 1: Use 24bpp mode
 uniform int depth_24bpp;
 
@@ -58,5 +57,5 @@ void main() {
     color = vec3(r, g, b);
   }
 
-  frag_color = vec4(color, alpha);
+  frag_color = vec4(color, 1.0);
 }

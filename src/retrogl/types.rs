@@ -76,6 +76,36 @@ impl GlType for [i16; 2] {
     }
 }
 
+impl GlType for [u16; 2] {
+    fn attribute_type() -> GLenum {
+        gl::UNSIGNED_SHORT
+    }
+
+    fn components() -> GlComponents {
+        GlComponents::Pair
+    }
+}
+
+impl GlType for u8 {
+    fn attribute_type() -> GLenum {
+        gl::UNSIGNED_BYTE
+    }
+
+    fn components() -> GlComponents {
+        GlComponents::Single
+    }
+}
+
+impl GlType for [f32; 2] {
+    fn attribute_type() -> GLenum {
+        gl::FLOAT
+    }
+
+    fn components() -> GlComponents {
+        GlComponents::Pair
+    }
+}
+
 impl GlType for [f32; 4] {
     fn attribute_type() -> GLenum {
         gl::FLOAT

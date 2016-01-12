@@ -80,6 +80,13 @@ impl Program {
         e
     }
 
+    pub fn uniform1i(&self, name: &str, i: GLint) -> Result<(), Error> {
+        self.bind();
+
+        self.uniform(name)
+            .map(|u| unsafe { gl::Uniform1i(u, i) })
+    }
+
     pub fn uniform2i(&self,
                      name: &str,
                      a: GLint,

@@ -12,6 +12,7 @@ mod vertex;
 mod error;
 mod types;
 mod buffer;
+mod texture;
 mod shader;
 mod program;
 mod dummy_state;

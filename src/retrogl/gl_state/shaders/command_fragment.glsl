@@ -24,7 +24,7 @@ const int BLEND_MODE_TEXTURE_BLEND = 2;
 
 // Read a 16bpp pixel in VRAM
 vec4 vram_get_pixel(int x, int y) {
-  return texelFetch(fb_texture, ivec2(x, 511 - y), 0);
+  return texelFetch(fb_texture, ivec2(x, y), 0);
 }
 
 // Take a normalized color and convert it into a 16bit 1555 ABGR

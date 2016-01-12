@@ -13,7 +13,7 @@ void main() {
   // Convert the PlayStation framebuffer coordinate into an OpenGL
   // texture coordinate
   float fb_x_coord = float(fb_coord.x) / 1024;
-  float fb_y_coord = 1.0 - (float(fb_coord.y) / 512);
+  float fb_y_coord = float(fb_coord.y) / 512;
 
   frag_fb_coord = vec2(fb_x_coord, fb_y_coord);
 }

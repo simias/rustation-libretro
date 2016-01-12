@@ -3,7 +3,7 @@ use std::mem::size_of;
 use std::ptr;
 
 use gl;
-use gl::types::{GLint, GLuint, GLsizeiptr, GLintptr, GLsizei};
+use gl::types::{GLint, GLuint, GLsizeiptr, GLintptr, GLsizei, GLenum};
 
 use retrogl::error::{Error, error_or, get_error};
 use retrogl::vertex::{Vertex, VertexArrayObject};
@@ -11,6 +11,8 @@ use retrogl::program::Program;
 use retrogl::types::Kind;
 
 pub struct DrawBuffer<T> {
+    /// OpenGL name for this buffer
+    id: GLuint,
     /// Vertex Array Object containing the bindings for this
     /// buffer. I'm assuming that each VAO will only use a single
     /// buffer for simplicity.
@@ -19,8 +21,6 @@ pub struct DrawBuffer<T> {
     program: Program,
     /// Number of elements T that the vertex buffer can hold
     capacity: usize,
-    /// OpenGL name for this buffer
-    id: GLuint,
     /// Marker for the type of our buffer's contents
     contains: PhantomData<T>,
     /// Current number of entries in the buffer
@@ -176,11 +176,11 @@ impl<T> DrawBuffer<T> {
         Ok(())
     }
 
-    pub fn draw_triangles(&mut self) -> Result<(), Error> {
+    pub fn draw(&mut self, mode: GLenum) -> Result<(), Error> {
         self.vao.bind();
         self.program.bind();
 
-        unsafe { gl::DrawArrays(gl::TRIANGLES, 0, self.len as GLsizei) };
+        unsafe { gl::DrawArrays(mode, 0, self.len as GLsizei) };
 
         get_error()
     }

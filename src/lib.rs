@@ -110,9 +110,9 @@ impl libretro::Context for Context {
             geometry: libretro::GameGeometry {
                 base_width: self.retrogl.xres() as c_uint,
                 base_height: self.retrogl.yres() as c_uint,
-                max_width: 640,
-                max_height: 576,
-                aspect_ratio: -1.0,
+                max_width: 1024,
+                max_height: 512,
+                aspect_ratio: -1.,
             },
             timing: libretro::SystemTiming {
                 fps: 60.,
