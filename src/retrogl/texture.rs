@@ -5,6 +5,8 @@ use retrogl::error::{Error, error_or, get_error};
 
 pub struct Texture {
     id: GLuint,
+    width: u32,
+    height: u32,
 }
 
 impl Texture {
@@ -25,6 +27,8 @@ impl Texture {
 
         error_or(Texture {
             id: id,
+            width: width,
+            height: height,
         })
     }
 
@@ -60,6 +64,18 @@ impl Texture {
         }
 
         get_error()
+    }
+
+    pub unsafe fn id(&self) -> GLuint {
+        self.id
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
     }
 }
 

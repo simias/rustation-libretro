@@ -12,6 +12,7 @@ use retrogl::shader::{Shader, ShaderType};
 use retrogl::program::Program;
 use retrogl::types::GlType;
 use retrogl::texture::Texture;
+use retrogl::framebuffer::Framebuffer;
 
 use libretro;
 
@@ -62,17 +63,15 @@ impl GlState {
                                            VRAM_HEIGHT as u32,
                                            gl::RGB5_A1));
 
-        {
-            // XXX replace with a proper buffer clear when it's
-            // implemented
-            let data = vec![0u16; 1024 * 512];
-
-            //let data = Box::new([0x7ffffu16; 1024 * 512]);
-            fb_texture.set_sub_image((0, 0),
-                                     (1024, 512),
-                                     gl::BGRA,
-                                     gl::UNSIGNED_SHORT_1_5_5_5_REV,
-                                     &data).unwrap();
+        match Framebuffer::new(&fb_texture) {
+            Ok(f) => unsafe {
+                f.bind();
+                // Clear the FB texture with an arbitrary color. The
+                // VRAM's contents on startup are undefined
+                gl::ClearColor(1.0, 0.5, 0.2, 0.);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            },
+            Err(e) => panic!("Can't create framebuffer: {:?}", e),
         }
 
         Ok(GlState {

@@ -13,6 +13,7 @@ mod error;
 mod types;
 mod buffer;
 mod texture;
+mod framebuffer;
 mod shader;
 mod program;
 mod dummy_state;
