@@ -28,7 +28,6 @@ pub struct GlState {
     fb_out: Texture,
     /// Current resolution of the frontend's framebuffer
     frontend_resolution: (u32, u32),
-    vram_debug: bool,
 }
 
 impl GlState {
@@ -58,13 +57,12 @@ impl GlState {
 
         let fb_texture = try!(Texture::new(VRAM_WIDTH_PIXELS as u32,
                                            VRAM_HEIGHT as u32,
-                                           gl::RGB5_A1));
+                                           gl::R16UI));
 
         match Framebuffer::new(&fb_texture) {
             Ok(_) => unsafe {
-                // Clear the FB texture with an arbitrary color. The
                 // VRAM's contents on startup are undefined
-                gl::ClearColor(1.0, 0.5, 0.2, 0.);
+                gl::ClearColor(0.3, 0., 0., 0.);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             },
             Err(e) => panic!("Can't create framebuffer: {:?}", e),
@@ -91,7 +89,6 @@ impl GlState {
             config: config,
             fb_texture: fb_texture,
             fb_out: fb_out,
-            vram_debug: true,
             frontend_resolution: (0, 0),
         })
     }
@@ -165,7 +162,6 @@ impl GlState {
             gl::Viewport(0, 0, w as GLsizei, h as GLsizei);
         }
     }
-
 }
 
 impl State for GlState {
@@ -227,36 +223,6 @@ impl State for GlState {
 
         self.output_buffer.program().uniform1i("fb", 1).unwrap();
         self.output_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
-
-        if self.vram_debug {
-            // Draw VRAM insert
-            unsafe {
-                // Enable alpha blending for the VRAM display
-                gl::Enable(gl::BLEND);
-                gl::BlendColor(0., 0., 0., 0.7);
-                gl::BlendEquationSeparate(gl::FUNC_ADD, gl::FUNC_ADD);
-                gl::BlendFuncSeparate(gl::CONSTANT_ALPHA,
-                                      gl::ONE_MINUS_CONSTANT_ALPHA,
-                                      gl::ONE,
-                                      gl::ZERO);
-            }
-
-            self.output_buffer.clear().unwrap();
-            self.output_buffer.push_slice(
-                &[OutputVertex { position: [0., -1.0],
-                                 fb_coord: [0, 512] },
-                  OutputVertex { position: [1.0, -1.0],
-                                 fb_coord: [1024, 512] },
-                  OutputVertex { position: [0., -0.5],
-                                 fb_coord: [0, 0] },
-                  OutputVertex { position: [1.0, -0.5],
-                                 fb_coord: [1024, 0] }])
-                .unwrap();
-
-            // Bind fb texture
-            self.output_buffer.program().uniform1i("fb", 0).unwrap();
-            self.output_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
-        }
 
         // Cleanup OpenGL context before returning to the frontend
         unsafe {
@@ -344,8 +310,8 @@ impl Renderer for GlState {
                   pixel_buffer: &[u16]) {
         self.fb_texture.set_sub_image(top_left,
                                       resolution,
-                                      gl::RGBA,
-                                      gl::UNSIGNED_SHORT_1_5_5_5_REV,
+                                      gl::RED_INTEGER,
+                                      gl::UNSIGNED_SHORT,
                                       pixel_buffer).unwrap();
 
         // XXX update target as well (in case the game uploads

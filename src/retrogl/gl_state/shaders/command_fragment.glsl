@@ -1,6 +1,7 @@
 #version 330 core
 
-uniform sampler2D fb_texture;
+// Integer texture 16bit per pixel, stored in the red component
+uniform usampler2D fb_texture;
 
 in vec3 frag_shading_color;
 // Texture page: base offset for texture lookup.
@@ -10,41 +11,43 @@ in vec2 frag_texture_coord;
 // Clut coordinates in VRAM
 flat in uvec2 frag_clut;
 // 0: no texture, 1: raw-texture, 2: blended
-flat in int frag_texture_blend_mode;
+flat in uint frag_texture_blend_mode;
 // 0: 16bpp (no clut), 1: 8bpp, 2: 4bpp
-flat in int frag_depth_shift;
+flat in uint frag_depth_shift;
 // 0: No dithering, 1: dithering enabled
-flat in int frag_dither;
+flat in uint frag_dither;
 
 out vec4 frag_color;
 
-const int BLEND_MODE_NO_TEXTURE    = 0;
-const int BLEND_MODE_RAW_TEXTURE   = 1;
-const int BLEND_MODE_TEXTURE_BLEND = 2;
+const uint BLEND_MODE_NO_TEXTURE    = 0U;
+const uint BLEND_MODE_RAW_TEXTURE   = 1U;
+const uint BLEND_MODE_TEXTURE_BLEND = 2U;
 
 // Read a 16bpp pixel in VRAM
-vec4 vram_get_pixel(int x, int y) {
-  return texelFetch(fb_texture, ivec2(x, y), 0);
+uint vram_get_pixel(int x, int y) {
+  return texelFetch(fb_texture, ivec2(x, y), 0).r;
 }
 
-// Take a normalized color and convert it into a 16bit 1555 ABGR
-// integer in the format used internally by the Playstation GPU.
-int rebuild_color(vec4 color) {
-  int a = int(floor(color.a + 0.5));
-  int r = int(floor(color.r * 31. + 0.5));
-  int g = int(floor(color.g * 31. + 0.5));
-  int b = int(floor(color.b * 31. + 0.5));
+// Convert a 16bit RGBA 5551 color into a normalized float RGBA
+// vector.
+vec4 texel_to_color(uint texel) {
+  uint a = texel >> 15U;
+  uint b = (texel >> 10U) & 0x1fU;
+  uint g = (texel >> 5U) & 0x1fU;
+  uint r = texel & 0x1fU;
 
-  return (a << 15) | (b << 10) | (g << 5) | r;
+  uvec4 color = uvec4(r, g, b, a);
+
+  return vec4(color) / vec4(31., 31., 31., 1.);
 }
 
 // Texture color 0x0000 is special in the Playstation GPU, it denotes
 // a fully transparent texel (even for opaque draw commands). If you
 // want black you have to use an opaque draw command and use `0x8000`
 // instead.
-bool is_transparent(vec4 texel) {
-  return rebuild_color(texel) == 0;
-}
+// bool is_transparent(vec4 texel) {
+//   return rebuild_color(texel) == 0;
+// }
 
 // PlayStation dithering pattern. The offset is selected based on the
 // pixel position in VRAM, by blocks of 4x4 pixels. The value is added
@@ -65,7 +68,7 @@ void main() {
     // Look up texture
 
     // Number of texel per VRAM 16bit "pixel" for the current depth
-    int pix_per_hw = 1 << frag_depth_shift;
+    uint pix_per_hw = 1U << frag_depth_shift;
 
     // 8 and 4bpp textures contain several texels per 16bit VRAM
     // "pixel"
@@ -78,16 +81,11 @@ void main() {
     tex_x += int(frag_texture_page.x);
     tex_y += int(frag_texture_page.y);
 
-    vec4 texel = vram_get_pixel(tex_x, tex_y);
+    uint texel = vram_get_pixel(tex_x, tex_y);
 
-    if (frag_depth_shift > 0) {
+    if (frag_depth_shift > 0U) {
       // 8 and 4bpp textures are paletted so we need to lookup the
       // real color in the CLUT
-
-      // First we need to convert the normalized color back to the
-      // internal integer format since it's not a real color but 2 or
-      // 4 CLUT indexes
-      int icolor = rebuild_color(texel);
 
       // A little bitwise magic to get the index in the CLUT. 4bpp
       // textures have 4 texels per VRAM "pixel", 8bpp have 2. We need
@@ -95,34 +93,40 @@ void main() {
       // halfword and then mask away the rest.
 
       // Bits per pixel (4 or 8)
-      int bpp = 16 >> frag_depth_shift;
+      uint bpp = 16U >> frag_depth_shift;
 
       // 0xf for 4bpp, 0xff for 8bpp
-      int mask = ((1 << bpp) - 1);
+      uint mask = ((1U << bpp) - 1U);
 
       // 0...3 for 4bpp, 1...2 for 8bpp
-      int align = int(fract(tex_x_float) * pix_per_hw);
+      uint align = uint(fract(tex_x_float) * pix_per_hw);
 
       // 0, 4, 8 or 12 for 4bpp, 0 or 8 for 8bpp
-      int shift = (align * bpp);
+      uint shift = (align * bpp);
 
       // Finally we have the index in the CLUT
-      int index = (icolor >> shift) & mask;
+      uint index = (texel >> shift) & mask;
 
-      int clut_x = int(frag_clut.x) + index;
+      int clut_x = int(frag_clut.x + index);
       int clut_y = int(frag_clut.y);
 
       // Look up the real color for the texel in the CLUT
       texel = vram_get_pixel(clut_x, clut_y);
     }
 
-    if (is_transparent(texel)) {
+    // texel color 0x0000 is always fully transparent (even for opaque
+    // draw commands)
+    if (texel == 0U) {
       // Fully transparent texel, discard
       discard;
     }
 
+    // We're done messing with integers, convert to the normalized
+    // floating point representation OpenGL understands.
+    vec4 tcolor = texel_to_color(texel);
+
     if (frag_texture_blend_mode == BLEND_MODE_RAW_TEXTURE) {
-      color = texel;
+      color = tcolor;
     } else /* BLEND_MODE_TEXTURE_BLEND */ {
       // Blend the texel with the shading color. `frag_shading_color`
       // is multiplied by two so that it can be used to darken or
@@ -131,7 +135,7 @@ void main() {
       // OpenGL will take care of that since the output buffer holds
       // integers. The alpha/mask bit bit is taken directly from the
       // texture however.
-      color = vec4(frag_shading_color * 2. * texel.rgb, texel.a);
+      color = vec4(frag_shading_color * 2. * tcolor.rgb, tcolor.a);
     }
   }
 
@@ -141,7 +145,8 @@ void main() {
 
   // The multiplication by `frag_dither` will result in
   // `dither_offset` being 0 if dithering is disabled
-  int dither_offset = dither_pattern[y_dither * 4 + x_dither] * frag_dither;
+  int dither_offset =
+    dither_pattern[y_dither * 4 + x_dither] * int(frag_dither);
 
   float dither = float(dither_offset) / 255.;
 

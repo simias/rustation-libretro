@@ -7,9 +7,9 @@ in uvec3 color;
 in uvec2 texture_page;
 in uvec2 texture_coord;
 in uvec2 clut;
-in int texture_blend_mode;
-in int depth_shift;
-in int dither;
+in uint texture_blend_mode;
+in uint depth_shift;
+in uint dither;
 
 // Drawing offset
 uniform ivec2 offset;
@@ -18,9 +18,9 @@ out vec3 frag_shading_color;
 flat out uvec2 frag_texture_page;
 out vec2 frag_texture_coord;
 flat out uvec2 frag_clut;
-flat out int frag_texture_blend_mode;
-flat out int frag_depth_shift;
-flat out int frag_dither;
+flat out uint frag_texture_blend_mode;
+flat out uint frag_depth_shift;
+flat out uint frag_dither;
 
 void main() {
   ivec2 pos = position + offset;
