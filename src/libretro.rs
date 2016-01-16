@@ -117,6 +117,7 @@ pub enum Environment {
     SetVariables = 16,
     GetVariableUpdate = 17,
     GetLogInterface = 27,
+    SetGeometry = 37,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,7 +162,7 @@ pub enum PixelFormat {
 pub mod hw_context {
     use std::ffi::CString;
     use libc::{uintptr_t, c_char, c_uint, c_void};
-    use super::{call_environment, Environment};
+    use super::{call_environment_mut, Environment};
 
     pub type ResetFn = extern "C" fn();
 
@@ -237,7 +238,8 @@ pub mod hw_context {
 
     pub fn init() -> bool {
         unsafe {
-            call_environment(Environment::SetHwRender, &mut static_hw_context)
+            call_environment_mut(Environment::SetHwRender,
+                                 &mut static_hw_context)
         }
     }
 
@@ -259,7 +261,7 @@ pub mod hw_context {
 }
 
 pub mod log {
-    use super::{call_environment, Environment};
+    use super::{call_environment_mut, Environment};
     use std::ffi::CString;
     use libc::c_char;
 
@@ -298,7 +300,8 @@ pub mod log {
         let mut cb = Callback { log: dummy_log };
 
         unsafe {
-            let ok = call_environment(Environment::GetLogInterface, &mut cb);
+            let ok = call_environment_mut(Environment::GetLogInterface,
+                                          &mut cb);
 
             if ok {
                 static_log = cb.log;
@@ -354,12 +357,15 @@ static mut environment: EnvironmentFn = dummy::environment;
 // Higher level helper functions
 //*******************************
 
-pub fn gl_frame_done(width: u16, height: u16) {
+pub fn gl_frame_done(width: u32, height: u32) {
     unsafe {
         // When using a hardware renderer we set the data pointer to
         // -1 to notify the frontend that the frame has been rendered
         // in the framebuffer.
-        video_refresh(-1isize as *const _, width as c_uint, height as c_uint, 0);
+        video_refresh(-1isize as *const _,
+                      width as c_uint,
+                      height as c_uint,
+                      0);
     }
 }
 
@@ -393,8 +399,8 @@ pub fn get_system_directory() -> Option<PathBuf> {
 
     let success =
         unsafe {
-            call_environment(Environment::GetSystemDirectory,
-                             &mut path)
+            call_environment_mut(Environment::GetSystemDirectory,
+                                 &mut path)
         };
 
     if success && !path.is_null() {
@@ -407,15 +413,25 @@ pub fn get_system_directory() -> Option<PathBuf> {
 }
 
 pub fn set_pixel_format(format: PixelFormat) -> bool {
-    let mut f = format as c_uint;
+    let f = format as c_uint;
 
     unsafe {
-        call_environment(Environment::SetPixelFormat, &mut f)
+        call_environment(Environment::SetPixelFormat, &f)
     }
 }
 
-unsafe fn call_environment<T>(which: Environment, var: &mut T) -> bool {
+pub fn set_geometry(geom: &GameGeometry) -> bool {
+    unsafe {
+        call_environment(Environment::SetGeometry, geom)
+    }
+}
+
+unsafe fn call_environment_mut<T>(which: Environment, var: &mut T) -> bool {
     environment(which as c_uint, var as *mut _ as *mut c_void)
+}
+
+unsafe fn call_environment<T>(which: Environment, var: &T) -> bool {
+    environment(which as c_uint, var as *const _ as *mut c_void)
 }
 
 /// Cast a mutable pointer into a mutable reference, return None if

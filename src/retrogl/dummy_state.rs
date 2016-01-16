@@ -28,7 +28,7 @@ impl State for DummyState {
     fn prepare_render(&mut self) {
     }
 
-    fn finish(&mut self) {
+    fn finalize_frame(&mut self) {
     }
 }
 
@@ -40,6 +40,15 @@ impl Renderer for DummyState {
     fn set_draw_area(&mut self, top_left: (u16, u16), resolution: (u16, u16)) {
         self.config.draw_area_top_left = top_left;
         self.config.draw_area_resolution = resolution;
+    }
+
+    fn set_display_mode(&mut self,
+                        top_left: (u16, u16),
+                        resolution: (u16, u16),
+                        depth_24bpp: bool) {
+        self.config.display_top_left = top_left;
+        self.config.display_resolution = resolution;
+        self.config.display_24bpp = depth_24bpp;
     }
 
     fn load_image(&mut self, _: (u16, u16), _: (u16, u16), _: &[u16]) {

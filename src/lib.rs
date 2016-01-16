@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::Read;
 
-use libc::{c_char, c_uint};
+use libc::c_char;
 
 use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
@@ -101,18 +101,19 @@ impl libretro::Context for Context {
         self.retrogl.render_frame(|renderer| {
             cpu.run_until_next_frame(shared_state, renderer);
         });
-
-        libretro::gl_frame_done(self.retrogl.xres(), self.retrogl.yres())
     }
 
     fn get_system_av_info(&self) -> libretro::SystemAvInfo {
         libretro::SystemAvInfo {
             geometry: libretro::GameGeometry {
-                base_width: self.retrogl.xres() as c_uint,
-                base_height: self.retrogl.yres() as c_uint,
-                max_width: 1024,
-                max_height: 512,
-                aspect_ratio: -1.,
+                // The base resolution will be overriden using
+                // ENVIRONMENT_SET_GEOMETRY later, so this base value
+                // is not really important
+                base_width: 640,
+                base_height: 576,
+                max_width: 640,
+                max_height: 576,
+                aspect_ratio: 4./3.,
             },
             timing: libretro::SystemTiming {
                 fps: 60.,

@@ -36,8 +36,9 @@ impl RetroGl {
         }
 
         let config = DrawConfig {
-            xres: 1024,
-            yres: 512,
+            display_top_left: (0, 0),
+            display_resolution: (1024, 512),
+            display_24bpp: false,
             draw_area_top_left: (0, 0),
             draw_area_resolution: (0, 0),
             draw_offset: (0, 0),
@@ -71,14 +72,6 @@ impl RetroGl {
         self.state = Box::new(DummyState::from_config(config));
     }
 
-    pub fn xres(&self) -> u16 {
-        self.state.draw_config().xres
-    }
-
-    pub fn yres(&self) -> u16 {
-        self.state.draw_config().yres
-    }
-
     pub fn render_frame<F>(&mut self, emulate: F)
         where F: FnOnce(&mut Renderer) {
 
@@ -86,7 +79,7 @@ impl RetroGl {
 
         emulate(self.state.renderer_mut());
 
-        self.state.finish();
+        self.state.finalize_frame();
     }
 }
 
@@ -94,15 +87,16 @@ pub trait State: Renderer {
     fn draw_config(&self) -> &DrawConfig;
 
     fn prepare_render(&mut self);
-    fn finish(&mut self);
+    fn finalize_frame(&mut self);
 
     fn renderer_mut(&mut self) -> &mut Renderer;
 }
 
 #[derive(Clone)]
 pub struct DrawConfig {
-    xres: u16,
-    yres: u16,
+    display_top_left: (u16, u16),
+    display_resolution: (u16, u16),
+    display_24bpp: bool,
     draw_offset: (i16, i16),
     draw_area_top_left: (u16, u16),
     draw_area_resolution: (u16, u16),
