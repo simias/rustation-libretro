@@ -37,11 +37,25 @@ struct Context {
     retrogl: retrogl::RetroGl,
     cpu: Cpu,
     shared_state: SharedState,
+    disc_path: PathBuf,
 }
 
 impl Context {
     fn new(disc: &Path) -> Result<Context, ()> {
 
+        let cpu = try!(Context::load_disc(disc));
+        let shared_state = SharedState::new();
+        let retrogl = try!(retrogl::RetroGl::new());
+
+        Ok(Context {
+            retrogl: retrogl,
+            cpu: cpu,
+            shared_state: shared_state,
+            disc_path: disc.to_path_buf(),
+        })
+    }
+
+    fn load_disc(disc: &Path) -> Result<Cpu, ()> {
         let disc =
             match Disc::from_path(&disc) {
                 Ok(d) => d,
@@ -56,7 +70,7 @@ impl Context {
         info!("Detected disc region: {:?}", region);
 
         let bios =
-            match find_bios(region) {
+            match Context::find_bios(region) {
                 Some(b) => b,
                 None => {
                     error!("Couldn't find a BIOS, bailing out");
@@ -71,8 +85,6 @@ impl Context {
                 Region::Japan => VideoStandard::Ntsc,
             };
 
-        let retrogl = try!(retrogl::RetroGl::new());
-
         // If we're asked to boot straight to the BIOS menu we pretend
         // no disc is present.
         let disc =
@@ -84,15 +96,128 @@ impl Context {
 
         let gpu = Gpu::new(video_standard);
         let inter = Interconnect::new(bios, gpu, disc);
-        let cpu = Cpu::new(inter);
 
-        let shared_state = SharedState::new();
+        Ok(Cpu::new(inter))
+    }
 
-        Ok(Context {
-            retrogl: retrogl,
-            cpu: cpu,
-            shared_state: shared_state,
-        })
+    /// Attempt to find a BIOS for `region` in the system directory
+    fn find_bios(region: Region) -> Option<Bios> {
+        let system_directory =
+            match libretro::get_system_directory() {
+                Some(dir) => dir,
+                // libretro.h says that when the system directory is not
+                // provided "it's up to the implementation to find a
+                // suitable directory" but I'm not sure what to put
+                // here. Maybe "."? I'd rather give an explicit error
+                // message instead.
+                None => {
+                    error!("The frontend didn't give us a system directory, \
+                            no BIOS can be loaded");
+                    return None;
+                }
+            };
+
+        info!("Looking for a BIOS for region {:?} in {:?}",
+              region,
+              system_directory);
+
+        let dir =
+            match ::std::fs::read_dir(&system_directory) {
+                Ok(d) => d,
+                Err(e) => {
+                    error!("Can't read directory {:?}: {}",
+                           system_directory, e);
+                    return None;
+                }
+            };
+
+        for entry in dir {
+            match entry {
+                Ok(entry) => {
+                    let path = entry.path();
+
+                    match entry.metadata() {
+                        Ok(md) => {
+                            if !md.is_file() {
+                                debug!("Ignoring {:?}: not a file", path);
+                            } else if md.len() != BIOS_SIZE as u64 {
+                                debug!("Ignoring {:?}: bad size", path);
+                            } else {
+                                let bios = Context::try_bios(region, &path);
+
+                                if bios.is_some() {
+                                    // Found a valid BIOS!
+                                    return bios;
+                                }
+                            }
+                        }
+                        Err(e) =>
+                            warn!("Ignoring {:?}: can't get file metadata: {}",
+                                  path, e)
+                    }
+                }
+                Err(e) => warn!("Error while reading directory: {}", e),
+            }
+        }
+
+        None
+    }
+
+    /// Attempt to read and load the BIOS at `path`
+    fn try_bios(region: Region, path: &Path) -> Option<Bios> {
+
+        let mut file =
+            match File::open(&path) {
+                Ok(f) => f,
+                Err(e) => {
+                    warn!("Can't open {:?}: {}", path, e);
+                    return None;
+                }
+            };
+
+        // Load the BIOS
+        let mut data = Box::new([0; BIOS_SIZE]);
+        let mut nread = 0;
+
+        while nread < BIOS_SIZE {
+            nread +=
+                match file.read(&mut data[nread..]) {
+                    Ok(0) => {
+                        warn!("Short read while loading {:?}", path);
+                        return None;
+                    }
+                    Ok(n) => n,
+                    Err(e) => {
+                        warn!("Error while reading {:?}: {}", path, e);
+                        return None;
+                    }
+                };
+        }
+
+        match Bios::new(data) {
+            Some(bios) => {
+                let md = bios.metadata();
+
+                if md.known_bad {
+                    warn!("Ignoring {:?}: known bad dump", path);
+                    None
+                } else if md.region != region {
+                    info!("Ignoring {:?}: bad region ({:?})", path, md.region);
+                    None
+                } else {
+                    info!("Using BIOS {:?} ({:?}, version {}.{})",
+                          path,
+                          md.region,
+                          md.version_major,
+                          md.version_minor);
+                    Some(bios)
+                }
+            }
+            None => {
+                debug!("Ignoring {:?}: not a known PlayStation BIOS", path);
+                None
+            }
+        }
     }
 }
 
@@ -126,6 +251,19 @@ impl libretro::Context for Context {
         }
     }
 
+    fn reset(&mut self) {
+        let cpu = Context::load_disc(&self.disc_path);
+
+        match cpu {
+            Ok(cpu) => {
+                info!("Game reset");
+                self.cpu = cpu;
+                self.shared_state.reset();
+            },
+            Err(_) => warn!("Couldn't reset game"),
+        }
+    }
+
     fn gl_context_reset(&mut self) {
         self.retrogl.context_reset();
     }
@@ -150,129 +288,10 @@ fn load_game(disc: PathBuf) -> Option<Box<libretro::Context>> {
 
 libretro_variables!(
     struct CoreVariables (prefix = "rustation") {
-        bios_menu: bool => "Boot to BIOS menu; false|true",
+        bios_menu: bool
+            => "Boot to BIOS menu; false|true",
     });
 
 fn init_variables() {
     CoreVariables::register();
-}
-
-/// Attempt to find a BIOS for `region` in the system directory
-fn find_bios(region: Region) -> Option<Bios> {
-    let system_directory =
-        match libretro::get_system_directory() {
-            Some(dir) => dir,
-            // libretro.h says that when the system directory is not
-            // provided "it's up to the implementation to find a
-            // suitable directory" but I'm not sure what to put
-            // here. Maybe "."? I'd rather give an explicit error
-            // message instead.
-            None => {
-                error!("The frontend didn't give us a system directory, \
-                        no BIOS can be loaded");
-                return None;
-            }
-        };
-
-    info!("Looking for a BIOS for region {:?} in {:?}",
-          region,
-          system_directory);
-
-    let dir =
-        match ::std::fs::read_dir(&system_directory) {
-            Ok(d) => d,
-            Err(e) => {
-                error!("Can't read directory {:?}: {}",
-                       system_directory, e);
-                return None;
-            }
-        };
-
-    for entry in dir {
-        match entry {
-            Ok(entry) => {
-                let path = entry.path();
-
-                match entry.metadata() {
-                    Ok(md) => {
-                        if !md.is_file() {
-                            debug!("Ignoring {:?}: not a file", path);
-                        } else if md.len() != BIOS_SIZE as u64 {
-                            debug!("Ignoring {:?}: bad size", path);
-                        } else {
-                            let bios = try_bios(region, &path);
-
-                            if bios.is_some() {
-                                // Found a valid BIOS!
-                                return bios;
-                            }
-                        }
-                    }
-                    Err(e) =>
-                        warn!("Ignoring {:?}: can't get file metadata: {}",
-                              path, e)
-                }
-            }
-            Err(e) => warn!("Error while reading directory: {}", e),
-        }
-    }
-
-    None
-}
-
-/// Attempt to read and load the BIOS at `path`
-fn try_bios(region: Region, path: &Path) -> Option<Bios> {
-
-    let mut file =
-        match File::open(&path) {
-            Ok(f) => f,
-            Err(e) => {
-                warn!("Can't open {:?}: {}", path, e);
-                return None;
-            }
-        };
-
-    // Load the BIOS
-    let mut data = Box::new([0; BIOS_SIZE]);
-    let mut nread = 0;
-
-    while nread < BIOS_SIZE {
-        nread +=
-            match file.read(&mut data[nread..]) {
-                Ok(0) => {
-                    warn!("Short read while loading {:?}", path);
-                    return None;
-                }
-                Ok(n) => n,
-                Err(e) => {
-                    warn!("Error while reading {:?}: {}", path, e);
-                    return None;
-                }
-            };
-    }
-
-    match Bios::new(data) {
-        Some(bios) => {
-            let md = bios.metadata();
-
-            if md.known_bad {
-                warn!("Ignoring {:?}: known bad dump", path);
-                None
-            } else if md.region != region {
-                info!("Ignoring {:?}: bad region ({:?})", path, md.region);
-                None
-            } else {
-                info!("Using BIOS {:?} ({:?}, version {}.{})",
-                      path,
-                      md.region,
-                      md.version_major,
-                      md.version_minor);
-                Some(bios)
-            }
-        }
-        None => {
-            debug!("Ignoring {:?}: not a known PlayStation BIOS", path);
-            None
-        }
-    }
 }

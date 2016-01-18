@@ -19,6 +19,7 @@ use std::path::PathBuf;
 pub trait Context {
     fn render_frame(&mut self);
     fn get_system_av_info(&self) -> SystemAvInfo;
+    fn reset(&mut self);
     fn gl_context_reset(&mut self);
     fn gl_context_destroy(&mut self);
 }
@@ -562,7 +563,7 @@ pub extern "C" fn retro_set_controller_port_device(_port: c_uint,
 
 #[no_mangle]
 pub extern "C" fn retro_reset() {
-    warn!("retro reset");
+    context().reset();
 }
 
 #[no_mangle]
@@ -694,6 +695,10 @@ pub mod dummy {
     pub struct Context;
 
     impl super::Context for Context {
+        fn reset(&mut self) {
+            panic!("Called reset with no context!");
+        }
+
         fn render_frame(&mut self) {
             panic!("Called render_frame with no context!");
         }
