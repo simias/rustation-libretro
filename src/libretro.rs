@@ -12,6 +12,7 @@
 
 use std::ptr;
 use std::ffi::CStr;
+use std::str::FromStr;
 use libc::{c_void, c_char, c_uint, c_float, c_double, size_t, int16_t};
 use std::path::PathBuf;
 
@@ -104,8 +105,8 @@ pub struct GameInfo {
 
 #[repr(C)]
 pub struct Variable {
-    key: *const c_char,
-    value: *const c_char,
+    pub key: *const c_char,
+    pub value: *const c_char,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -426,12 +427,22 @@ pub fn set_geometry(geom: &GameGeometry) -> bool {
     }
 }
 
+pub fn register_variables(variables: &[Variable]) -> bool {
+    unsafe {
+        call_environment_slice(Environment::SetVariables, variables)
+    }
+}
+
 unsafe fn call_environment_mut<T>(which: Environment, var: &mut T) -> bool {
     environment(which as c_uint, var as *mut _ as *mut c_void)
 }
 
 unsafe fn call_environment<T>(which: Environment, var: &T) -> bool {
     environment(which as c_uint, var as *const _ as *mut c_void)
+}
+
+unsafe fn call_environment_slice<T>(which: Environment, var: &[T]) -> bool {
+    environment(which as c_uint, var.as_ptr() as *const _ as *mut c_void)
 }
 
 /// Cast a mutable pointer into a mutable reference, return None if
@@ -470,6 +481,8 @@ pub extern "C" fn retro_set_environment(callback: EnvironmentFn) {
     unsafe {
         environment = callback
     }
+
+    ::init_variables();
 }
 
 #[no_mangle]
@@ -727,4 +740,96 @@ fn build_path(cstr: &CStr) -> Option<PathBuf> {
             None
         }
     }
+}
+
+pub unsafe fn get_variable<T: FromStr>(var: &str,
+                                       var_cstr: *const c_char) -> T {
+    let mut v = Variable {
+        key: var_cstr as *const _,
+        value: ptr::null(),
+    };
+
+    let ok =
+        call_environment_mut(Environment::GetVariable, &mut v);
+
+    if !ok || v.value.is_null() {
+        panic!("Couldn't get variable {}", var);
+    }
+
+    let value = CStr::from_ptr(v.value).to_str().unwrap();
+
+    match FromStr::from_str(value) {
+        Ok(v) => v,
+        Err(_) => panic!("Couldn't parse variable {}", var),
+    }
+}
+
+macro_rules! cstring {
+    ($x:expr) => {
+        concat!($x, '\0') as *const _ as *const c_char
+    };
+}
+
+/// Create a structure `$st` which will be used to register and access
+/// libretro variables:
+///
+/// ```rust
+/// libretro_variables!(
+///     struct MyVariables (prefix = "mycore") {
+///         some_option: i32 => "Do something; 1|2|3",
+///         enable_something: bool => "Enable something; true|false",
+///     });
+/// ```
+///
+/// The variable names given to the frontend will be prefixed with
+/// `$prefix` as mandated by libretro.
+///
+/// The variables can then be registered with the frontend (prefrably
+/// in the `init_variables` callback with:
+///
+/// ```rust
+/// MyVariables::register();
+/// ```
+///
+/// Individual variables can be accessed using getter functions:
+///
+/// ```rust
+/// let value = MyVariables::some_option();
+/// ```
+macro_rules! libretro_variables {
+    (struct $st:ident (prefix = $prefix:expr) {
+        $($name:ident : $ty:ty => $str:expr),+$(,)*
+    }) => (
+        struct $st;
+
+        impl $st {
+            fn register() {
+
+                let variables = [
+                    $($crate::libretro::Variable {
+                        key: cstring!(concat!($prefix, '_', stringify!($name))),
+                        value: cstring!($str),
+                    }),+,
+                    // End of table marker
+                    $crate::libretro::Variable {
+                        key: ::std::ptr::null() as *const c_char,
+                        value: ::std::ptr::null() as *const c_char,
+                    }
+                    ];
+
+                let ok = $crate::libretro::register_variables(&variables);
+
+                if !ok {
+                    warn!("Failed to register variables");
+                }
+            }
+
+            $(fn $name() -> $ty {
+                let cstr = cstring!(concat!($prefix, '_', stringify!($name)));
+
+                unsafe {
+                    $crate::libretro::get_variable(stringify!($name), cstr)
+                }
+            })+
+        })
 }

@@ -1,3 +1,4 @@
+#[macro_use]
 pub mod libretro;
 mod retrogl;
 mod retrolog;
@@ -21,12 +22,6 @@ extern crate gl;
 extern crate log;
 extern crate rustation;
 extern crate arrayvec;
-
-macro_rules! cstring {
-    ($x:expr) => {
-        concat!($x, '\0') as *const _ as *const c_char
-    };
-}
 
 /// Static system information sent to the frontend on request
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
@@ -78,8 +73,17 @@ impl Context {
 
         let retrogl = try!(retrogl::RetroGl::new());
 
+        // If we're asked to boot straight to the BIOS menu we pretend
+        // no disc is present.
+        let disc =
+            if CoreVariables::bios_menu() {
+                None
+            } else {
+                Some(disc)
+            };
+
         let gpu = Gpu::new(video_standard);
-        let inter = Interconnect::new(bios, gpu, Some(disc));
+        let inter = Interconnect::new(bios, gpu, disc);
         let cpu = Cpu::new(inter);
 
         let shared_state = SharedState::new();
@@ -142,6 +146,15 @@ fn load_game(disc: PathBuf) -> Option<Box<libretro::Context>> {
 
     Context::new(&disc).ok()
         .map(|c| Box::new(c) as Box<libretro::Context>)
+}
+
+libretro_variables!(
+    struct CoreVariables (prefix = "rustation") {
+        bios_menu: bool => "Boot to BIOS menu; false|true",
+    });
+
+fn init_variables() {
+    CoreVariables::register();
 }
 
 /// Attempt to find a BIOS for `region` in the system directory

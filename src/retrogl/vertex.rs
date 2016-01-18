@@ -96,16 +96,11 @@ macro_rules! build_attribute {
 /// Inspired by glium, implement the Vertex trait for fields `$field`
 /// of struct `$st`
 macro_rules! implement_vertex {
-    ($st:ident, $($field:ident),+) => (
+    ($st:ident, $($field:ident),+$(,)*) => (
         impl $crate::retrogl::vertex::Vertex for $st {
             fn attributes() -> Vec<$crate::retrogl::vertex::Attribute> {
                 vec![$(build_attribute!($st, $field)),+]
             }
         }
-    );
-
-    // Allow trailing commas
-    ($struct_name:ident, $($field_name:ident),+,) => (
-        implement_vertex!($struct_name, $($field_name),+);
-    );
+    )
 }
