@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::Read;
 
-use libc::c_char;
+use libc::{c_char, c_uint};
 
 use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
-use rustation::gpu::{Gpu, VideoStandard};
+use rustation::gpu::{Gpu, VideoClock};
 use rustation::memory::Interconnect;
 use rustation::cpu::Cpu;
 use rustation::shared::SharedState;
@@ -38,24 +38,26 @@ struct Context {
     cpu: Cpu,
     shared_state: SharedState,
     disc_path: PathBuf,
+    video_clock: VideoClock,
 }
 
 impl Context {
     fn new(disc: &Path) -> Result<Context, ()> {
 
-        let cpu = try!(Context::load_disc(disc));
+        let (cpu, video_clock) = try!(Context::load_disc(disc));
         let shared_state = SharedState::new();
-        let retrogl = try!(retrogl::RetroGl::new());
+        let retrogl = try!(retrogl::RetroGl::new(video_clock));
 
         Ok(Context {
             retrogl: retrogl,
             cpu: cpu,
             shared_state: shared_state,
             disc_path: disc.to_path_buf(),
+            video_clock: video_clock,
         })
     }
 
-    fn load_disc(disc: &Path) -> Result<Cpu, ()> {
+    fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
         let disc =
             match Disc::from_path(&disc) {
                 Ok(d) => d,
@@ -78,11 +80,11 @@ impl Context {
                 }
             };
 
-        let video_standard =
+        let video_clock =
             match region {
-                Region::Europe => VideoStandard::Pal,
-                Region::NorthAmerica => VideoStandard::Ntsc,
-                Region::Japan => VideoStandard::Ntsc,
+                Region::Europe => VideoClock::Pal,
+                Region::NorthAmerica => VideoClock::Ntsc,
+                Region::Japan => VideoClock::Ntsc,
             };
 
         // If we're asked to boot straight to the BIOS menu we pretend
@@ -94,10 +96,10 @@ impl Context {
                 Some(disc)
             };
 
-        let gpu = Gpu::new(video_standard);
+        let gpu = Gpu::new(video_clock);
         let inter = Interconnect::new(bios, gpu, disc);
 
-        Ok(Cpu::new(inter))
+        Ok((Cpu::new(inter), video_clock))
     }
 
     /// Attempt to find a BIOS for `region` in the system directory
@@ -233,31 +235,22 @@ impl libretro::Context for Context {
     }
 
     fn get_system_av_info(&self) -> libretro::SystemAvInfo {
-        libretro::SystemAvInfo {
-            geometry: libretro::GameGeometry {
-                // The base resolution will be overriden using
-                // ENVIRONMENT_SET_GEOMETRY later, so this base value
-                // is not really important
-                base_width: 640,
-                base_height: 576,
-                max_width: 640,
-                max_height: 576,
-                aspect_ratio: 4./3.,
-            },
-            timing: libretro::SystemTiming {
-                fps: 60.,
-                sample_rate: 44_100.
-            }
-        }
+        let upscaling = CoreVariables::internal_upscale_factor();
+
+        get_av_info(self.video_clock, upscaling)
+    }
+
+    fn refresh_variables(&mut self) {
+        self.retrogl.refresh_variables();
     }
 
     fn reset(&mut self) {
-        let cpu = Context::load_disc(&self.disc_path);
 
-        match cpu {
-            Ok(cpu) => {
+        match Context::load_disc(&self.disc_path) {
+            Ok((cpu, video_clock)) => {
                 info!("Game reset");
                 self.cpu = cpu;
+                self.video_clock = video_clock;
                 self.shared_state.reset();
             },
             Err(_) => warn!("Couldn't reset game"),
@@ -288,10 +281,54 @@ fn load_game(disc: PathBuf) -> Option<Box<libretro::Context>> {
 
 libretro_variables!(
     struct CoreVariables (prefix = "rustation") {
+        internal_upscale_factor: u32
+            => "Internal upscaling factor; 1|2|3|4|5|6|7|8|9|10",
+        internal_color_depth: u8
+            => "Internal color depth; 16|32",
         bios_menu: bool
             => "Boot to BIOS menu; false|true",
     });
 
 fn init_variables() {
     CoreVariables::register();
+}
+
+fn get_av_info(std: VideoClock, upscaling: u32) -> libretro::SystemAvInfo {
+
+    // Maximum resolution supported by the PlayStation video
+    // output is 640x480
+    let max_width = (640 * upscaling) as c_uint;
+    let max_height = (480 * upscaling) as c_uint;
+
+    // Precise FPS values for the video output. It's actually possible
+    // to configure the PlayStation GPU to output with NTSC timings
+    // with the PAL clock (and vice-versa) which would make this code
+    // invalid but it wouldn't make a lot of sense for a game to do
+    // that.
+    let fps =
+        match std {
+            // 53.690MHz GPU clock frequency, 263 lines per field,
+            // 3413 cycles per line
+            VideoClock::Ntsc => 59.81,
+            // 53.222MHz GPU clock frequency, 314 lines per field,
+            // 3406 cycles per line
+            VideoClock::Pal => 49.76,
+        };
+
+    libretro::SystemAvInfo {
+        geometry: libretro::GameGeometry {
+            // The base resolution will be overriden using
+            // ENVIRONMENT_SET_GEOMETRY before rendering a frame so
+            // this base value is not really important
+            base_width: max_width,
+            base_height: max_height,
+            max_width: max_width,
+            max_height: max_height,
+            aspect_ratio: 4./3.,
+        },
+        timing: libretro::SystemTiming {
+            fps: fps,
+            sample_rate: 44_100.
+        }
+    }
 }

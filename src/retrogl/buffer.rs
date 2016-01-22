@@ -107,6 +107,28 @@ impl<T: Vertex> DrawBuffer<T> {
 
         get_error()
     }
+
+    pub fn enable_attribute(&self, attr: &str) -> Result<(), Error> {
+        let index = try!(self.program.find_attribute(attr));
+
+        self.vao.bind();
+        unsafe {
+            gl::EnableVertexAttribArray(index);
+        }
+
+        get_error()
+    }
+
+    pub fn disable_attribute(&self, attr: &str) -> Result<(), Error> {
+        let index = try!(self.program.find_attribute(attr));
+
+        self.vao.bind();
+        unsafe {
+            gl::DisableVertexAttribArray(index);
+        }
+
+        get_error()
+    }
 }
 
 impl<T> DrawBuffer<T> {

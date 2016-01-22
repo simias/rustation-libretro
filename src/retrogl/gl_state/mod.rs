@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gl;
 use gl::types::{GLuint, GLint, GLsizei};
 use arrayvec::ArrayVec;
@@ -15,10 +17,14 @@ use retrogl::types::GlType;
 use retrogl::texture::Texture;
 use retrogl::framebuffer::Framebuffer;
 
+use CoreVariables;
+
 use libretro;
 
 pub struct GlState {
+    /// Buffer used to handle PlayStation GPU draw commands
     command_buffer: DrawBuffer<CommandVertex>,
+    /// Buffer used to draw to the frontend's framebuffer
     output_buffer: DrawBuffer<OutputVertex>,
     /// Texture used to store the VRAM for texture mapping
     config: DrawConfig,
@@ -28,11 +34,19 @@ pub struct GlState {
     fb_out: Texture,
     /// Current resolution of the frontend's framebuffer
     frontend_resolution: (u32, u32),
+    /// Current internal resolution upscaling factor
+    internal_upscaling: u32,
+    /// Current internal color depth
+    internal_color_depth: u8,
 }
 
 impl GlState {
     pub fn from_config(config: DrawConfig) -> Result<GlState, Error> {
-        info!("Building OpenGL state");
+        let upscaling = CoreVariables::internal_upscale_factor();
+        let depth = CoreVariables::internal_color_depth();
+
+        info!("Building OpenGL state ({}x internal res., {}bpp)",
+              upscaling, depth);
 
         let vs = try!(Shader::new(include_str!("shaders/command_vertex.glsl"),
                                   ShaderType::Vertex));
@@ -55,9 +69,14 @@ impl GlState {
 
         let output_buffer = try!(DrawBuffer::new(4, program));
 
-        let fb_texture = try!(Texture::new(VRAM_WIDTH_PIXELS as u32,
-                                           VRAM_HEIGHT as u32,
-                                           gl::R16UI));
+        let native_width = VRAM_WIDTH_PIXELS as u32;
+        let native_height = VRAM_HEIGHT as u32;
+
+        // Integer texture holding the raw VRAM texture contents. We
+        // can't meaningfully upscale it since most games use paletted
+        // textures.
+        let fb_texture =
+            try!(Texture::new(native_width, native_height, gl::R16UI));
 
         match Framebuffer::new(&fb_texture) {
             Ok(_) => unsafe {
@@ -68,10 +87,22 @@ impl GlState {
             Err(e) => panic!("Can't create framebuffer: {:?}", e),
         }
 
-        // XXX support increased resolution and color depth
-        let fb_out = try!(Texture::new(VRAM_WIDTH_PIXELS as u32,
-                                       VRAM_HEIGHT as u32,
-                                       gl::RGB5_A1));
+        if depth > 16 {
+            // Dithering is superfluous when we increase the internal
+            // color depth
+            try!(command_buffer.disable_attribute("dither"));
+        }
+
+        let texture_storage =
+            match depth {
+                16 => gl::RGB5_A1,
+                32 => gl::RGBA8,
+                _ => panic!("Unsupported depth {}", depth),
+            };
+
+        let fb_out = try!(Texture::new(native_width * upscaling,
+                                       native_height * upscaling,
+                                       texture_storage));
 
         match Framebuffer::new(&fb_out) {
             Ok(_) => unsafe {
@@ -83,14 +114,25 @@ impl GlState {
             Err(e) => panic!("Can't create framebuffer: {:?}", e),
         }
 
-        Ok(GlState {
+        let state = GlState {
             command_buffer: command_buffer,
             output_buffer: output_buffer,
             config: config,
             fb_texture: fb_texture,
             fb_out: fb_out,
             frontend_resolution: (0, 0),
-        })
+            internal_upscaling: upscaling,
+            internal_color_depth: depth,
+        };
+
+        let vram_contents = *state.config.vram;
+
+        // Load the VRAM contents into the textures
+        try!(state.upload_textures((0, 0),
+                                   (VRAM_WIDTH_PIXELS, VRAM_HEIGHT),
+                                   &vram_contents));
+
+        Ok(state)
     }
 
     fn draw(&mut self) -> Result<(), Error> {
@@ -124,8 +166,17 @@ impl GlState {
         let (x, y) = self.config.draw_area_top_left;
         let (w, h) = self.config.draw_area_resolution;
 
+        let upscale = self.internal_upscaling as GLsizei;
+
+        // We need to scale those to match the internal resolution if
+        // upscaling is enabled
+        let x = (x as GLsizei) * upscale;
+        let y = (y as GLsizei) * upscale;
+        let w = (w as GLsizei) * upscale;
+        let h = (h as GLsizei) * upscale;
+
         unsafe {
-            gl::Scissor(x as GLint, y as GLint, w as GLsizei, h as GLsizei);
+            gl::Scissor(x, y, w, h);
         }
     }
 
@@ -133,20 +184,25 @@ impl GlState {
         let (f_w, f_h) = self.frontend_resolution;
         let (w, h) = self.config.display_resolution;
 
+        let upscale = self.internal_upscaling;
+
         // XXX scale w and h when implementing increased internal
         // resolution
-        let w = w as u32;
-        let h = h as u32;
+        let w = (w as u32) * upscale;
+        let h = (h as u32) * upscale;
 
         if w != f_w || h != f_h {
             let geometry = libretro::GameGeometry {
                 base_width: w as c_uint,
                 base_height: h as c_uint,
-                max_width: 640,
-                max_height: 576,
+                // Max parameters are ignored by this call
+                max_width: 0,
+                max_height: 0,
                 // Is this accurate?
                 aspect_ratio: 4./3.,
             };
+
+            info!("fb size: {}x{}", w, h);
 
             libretro::set_geometry(&geometry);
 
@@ -161,6 +217,20 @@ impl GlState {
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo);
             gl::Viewport(0, 0, w as GLsizei, h as GLsizei);
         }
+    }
+
+    fn upload_textures(&self,
+                       top_left: (u16, u16),
+                       resolution: (u16, u16),
+                       pixel_buffer: &[u16]) -> Result<(), Error> {
+
+        try!(self.fb_texture.set_sub_image(top_left,
+                                           resolution,
+                                           gl::RED_INTEGER,
+                                           gl::UNSIGNED_SHORT,
+                                           pixel_buffer));
+
+        Ok(())
     }
 }
 
@@ -185,6 +255,55 @@ impl State for GlState {
 
         // Bind `fb_texture` to texture unit 0
         self.fb_texture.bind(gl::TEXTURE0);
+    }
+
+    fn refresh_variables(&mut self) -> bool {
+        let upscaling = CoreVariables::internal_upscale_factor();
+        let depth = CoreVariables::internal_color_depth();
+
+
+        let rebuild_fb_out =
+            upscaling != self.internal_upscaling ||
+            depth != self.internal_color_depth;
+
+        if rebuild_fb_out {
+
+            if depth > 16 {
+                self.command_buffer.disable_attribute("dither").unwrap()
+            } else {
+                self.command_buffer.enable_attribute("dither").unwrap()
+            }
+
+            let native_width = VRAM_WIDTH_PIXELS as u32;
+            let native_height = VRAM_HEIGHT as u32;
+
+            let w = native_width * upscaling;
+            let h = native_height * upscaling;
+
+            let texture_storage =
+                match depth {
+                    16 => gl::RGB5_A1,
+                    32 => gl::RGBA8,
+                    _ => panic!("Unsupported depth {}", depth),
+                };
+
+            let fb_out = Texture::new(w, h, texture_storage).unwrap();
+
+            // XXX TODO: copy the preview `fb_out` into the new one
+            // in case the game doesn't refresh the screen right
+            // away?
+            self.fb_out = fb_out;
+        }
+
+        // If the scaling factor has changed the frontend should be
+        // reconfigured. We can't do that here because it could
+        // destroy the OpenGL context which would destroy `self`
+        let reconfigure_frontend = self.internal_upscaling != upscaling;
+
+        self.internal_upscaling = upscaling;
+        self.internal_color_depth = depth;
+
+        return reconfigure_frontend
     }
 
     fn finalize_frame(&mut self) {
@@ -308,14 +427,35 @@ impl Renderer for GlState {
                   top_left: (u16, u16),
                   resolution: (u16, u16),
                   pixel_buffer: &[u16]) {
-        self.fb_texture.set_sub_image(top_left,
-                                      resolution,
-                                      gl::RED_INTEGER,
-                                      gl::UNSIGNED_SHORT,
-                                      pixel_buffer).unwrap();
+        self.draw().unwrap();
 
-        // XXX update target as well (in case the game uploads
-        // graphics directly to the work buffer)
+        let x_start = top_left.0 as usize;
+        let y_start = top_left.1 as usize;
+
+        let w = resolution.0 as usize;
+        let h = resolution.1 as usize;
+
+        // Update the VRAM buffer (this way we won't lose the textures
+        // if the GL context gets destroyed)
+        match Rc::get_mut(&mut self.config.vram) {
+            Some(vram) =>
+                for y in 0..h {
+                    for x in 0..w {
+                        let fb_x = x_start + x;
+                        let fb_y = y_start + y;
+
+                        let fb_w = VRAM_WIDTH_PIXELS as usize;
+
+                        let fb_index = fb_y * fb_w + fb_x;
+                        let buffer_index = y * w + x;
+
+                        vram[fb_index] = pixel_buffer[buffer_index];
+                    }
+                },
+            None => panic!("VRAM is shared!"),
+        }
+
+        self.upload_textures(top_left, resolution, pixel_buffer).unwrap();
     }
 }
 

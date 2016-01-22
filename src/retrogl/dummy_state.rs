@@ -21,6 +21,10 @@ impl State for DummyState {
         &self.config
     }
 
+    fn refresh_variables(&mut self) -> bool {
+        false
+    }
+
     fn renderer_mut(&mut self) -> &mut Renderer {
         &mut *self
     }

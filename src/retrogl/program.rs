@@ -58,6 +58,8 @@ impl Program {
 
         if index < 0 {
             error!("Couldn't find attribute \"{}\" in program", attr);
+            try!(get_error());
+            // Probably shouldn't be reached, but just in case...
             return Err(Error::InvalidValue);
         }
 

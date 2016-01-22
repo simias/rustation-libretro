@@ -1,8 +1,13 @@
 //! PlayStation OpenGL 3.3 renderer playing nice with libretro
 
+use std::rc::Rc;
+
 use libretro;
 use gl;
+use rustation::gpu::VideoClock;
 use rustation::gpu::renderer::Renderer;
+use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
+use CoreVariables;
 
 use self::dummy_state::DummyState;
 use self::gl_state::GlState;
@@ -21,10 +26,11 @@ mod gl_state;
 
 pub struct RetroGl {
     state: Box<State>,
+    video_clock: VideoClock,
 }
 
 impl RetroGl {
-    pub fn new() -> Result<RetroGl, ()> {
+    pub fn new(video_clock: VideoClock) -> Result<RetroGl, ()> {
         if !libretro::set_pixel_format(libretro::PixelFormat::Xrgb8888) {
             error!("Can't set pixel format");
             return Err(());
@@ -42,11 +48,13 @@ impl RetroGl {
             draw_area_top_left: (0, 0),
             draw_area_resolution: (0, 0),
             draw_offset: (0, 0),
+            vram: Rc::new([0x23f; VRAM_PIXELS]),
         };
 
         Ok(RetroGl {
             // No context until `context_reset` is called
             state: Box::new(DummyState::from_config(config)),
+            video_clock: video_clock,
         })
     }
 
@@ -67,6 +75,8 @@ impl RetroGl {
     }
 
     pub fn context_destroy(&mut self) {
+        info!("OpenGL context destroy");
+
         let config = self.state.draw_config().clone();
 
         self.state = Box::new(DummyState::from_config(config));
@@ -81,10 +91,42 @@ impl RetroGl {
 
         self.state.finalize_frame();
     }
+
+    pub fn refresh_variables(&mut self) {
+        let reconfigure_frontend = self.state.refresh_variables();
+
+        if reconfigure_frontend {
+            // The resolution has changed, we must tell the frontend
+            // to change its format
+
+            let upscaling = CoreVariables::internal_upscale_factor();
+
+            let av_info = ::get_av_info(self.video_clock,
+                                        upscaling);
+
+            // This call can potentially (but not necessarily) call
+            // `context_destroy` and `context_reset` to reinitialize
+            // the entire OpenGL context, so beware.
+            let ok = unsafe {
+                libretro::set_system_av_info(&av_info)
+            };
+
+            if !ok {
+                // Some frontends might not support changing the video
+                // settings at runtime, if that's the case we continue
+                // with the old settings. The new config will be
+                // applied on reset.
+                warn!("Couldn't change frontend resolution");
+                warn!("Try resetting to enable the new configuration");
+            }
+        }
+    }
 }
 
 pub trait State: Renderer {
     fn draw_config(&self) -> &DrawConfig;
+    /// Return `true` if the frontend should be reconfigured
+    fn refresh_variables(&mut self) -> bool;
 
     fn prepare_render(&mut self);
     fn finalize_frame(&mut self);
@@ -100,4 +142,7 @@ pub struct DrawConfig {
     draw_offset: (i16, i16),
     draw_area_top_left: (u16, u16),
     draw_area_resolution: (u16, u16),
+    vram: Rc<[u16; VRAM_PIXELS]>,
 }
+
+const VRAM_PIXELS: usize = VRAM_WIDTH_PIXELS as usize * VRAM_HEIGHT as usize;

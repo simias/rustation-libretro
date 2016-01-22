@@ -17,10 +17,20 @@ use libc::{c_void, c_char, c_uint, c_float, c_double, size_t, int16_t};
 use std::path::PathBuf;
 
 pub trait Context {
-    fn render_frame(&mut self);
+    /// Get the system's audio and video parameters
     fn get_system_av_info(&self) -> SystemAvInfo;
+    /// Advance the emulation state by one video frame and render it
+    /// to the frontend's framebuffer
+    fn render_frame(&mut self);
+    /// Called when some configuration variables have been
+    /// modified. The core should load the new values and change its
+    /// behavior accordingly.
+    fn refresh_variables(&mut self);
+    /// Reset the game being played
     fn reset(&mut self);
+    /// The OpenGL context has been reset, it needs to be rebuilt
     fn gl_context_reset(&mut self);
+    /// The OpenGL context is about to be destroyed
     fn gl_context_destroy(&mut self);
 }
 
@@ -119,6 +129,7 @@ pub enum Environment {
     SetVariables = 16,
     GetVariableUpdate = 17,
     GetLogInterface = 27,
+    SetSystemAvInfo = 32,
     SetGeometry = 37,
 }
 
@@ -203,13 +214,6 @@ pub mod hw_context {
     }
 
     pub extern "C" fn context_destroy() {
-        unsafe {
-            static_hw_context.get_current_framebuffer =
-                dummy_get_current_framebuffer;
-            static_hw_context.get_proc_address =
-                dummy_get_proc_address;
-        }
-
         super::context().gl_context_destroy();
     }
 
@@ -428,10 +432,30 @@ pub fn set_geometry(geom: &GameGeometry) -> bool {
     }
 }
 
-pub fn register_variables(variables: &[Variable]) -> bool {
-    unsafe {
-        call_environment_slice(Environment::SetVariables, variables)
+/// Can destroy the OpenGL context!
+pub unsafe fn set_system_av_info(av_info: &SystemAvInfo) -> bool {
+    call_environment(Environment::SetSystemAvInfo, av_info)
+}
+
+pub fn variables_need_update() -> bool {
+    let mut needs_update = false;
+
+    let ok =
+        unsafe {
+            call_environment_mut(Environment::GetVariableUpdate,
+                                 &mut needs_update)
+        };
+
+    if !ok {
+        panic!("Environment::GetVariableUpdate failed");
     }
+
+    needs_update
+}
+
+/// `variables` *must* end with a `{ NULL, NULL }` marker
+pub unsafe fn register_variables(variables: &[Variable]) -> bool {
+    call_environment_slice(Environment::SetVariables, variables)
 }
 
 unsafe fn call_environment_mut<T>(which: Environment, var: &mut T) -> bool {
@@ -570,7 +594,13 @@ pub extern "C" fn retro_reset() {
 pub unsafe extern "C" fn retro_run() {
     input_poll();
 
-    context().render_frame();
+    let context = context();
+
+    if variables_need_update() {
+        context.refresh_variables();
+    }
+
+    context.render_frame();
 }
 
 #[no_mangle]
@@ -695,16 +725,20 @@ pub mod dummy {
     pub struct Context;
 
     impl super::Context for Context {
-        fn reset(&mut self) {
-            panic!("Called reset with no context!");
-        }
-
         fn render_frame(&mut self) {
             panic!("Called render_frame with no context!");
         }
 
         fn get_system_av_info(&self) -> super::SystemAvInfo {
             panic!("Called get_system_av_info with no context!");
+        }
+
+        fn refresh_variables(&mut self) {
+            panic!("Called refresh_variables with no context!");
+        }
+
+        fn reset(&mut self) {
+            panic!("Called reset with no context!");
         }
 
         fn gl_context_reset(&mut self) {
@@ -822,7 +856,9 @@ macro_rules! libretro_variables {
                     }
                     ];
 
-                let ok = $crate::libretro::register_variables(&variables);
+                let ok = unsafe {
+                    $crate::libretro::register_variables(&variables)
+                };
 
                 if !ok {
                     warn!("Failed to register variables");
