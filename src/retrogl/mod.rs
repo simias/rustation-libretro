@@ -48,7 +48,7 @@ impl RetroGl {
             draw_area_top_left: (0, 0),
             draw_area_resolution: (0, 0),
             draw_offset: (0, 0),
-            vram: Rc::new([0x23f; VRAM_PIXELS]),
+            vram: Rc::new([0x1f; VRAM_PIXELS]),
         };
 
         Ok(RetroGl {

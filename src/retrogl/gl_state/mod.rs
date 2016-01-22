@@ -26,6 +26,8 @@ pub struct GlState {
     command_buffer: DrawBuffer<CommandVertex>,
     /// Buffer used to draw to the frontend's framebuffer
     output_buffer: DrawBuffer<OutputVertex>,
+    /// Buffer used to copy textures from `fb_texture` to `fb_out`
+    image_load_buffer: DrawBuffer<ImageLoadVertex>,
     /// Texture used to store the VRAM for texture mapping
     config: DrawConfig,
     /// Framebuffer used as a shader input for texturing draw commands
@@ -48,26 +50,23 @@ impl GlState {
         info!("Building OpenGL state ({}x internal res., {}bpp)",
               upscaling, depth);
 
-        let vs = try!(Shader::new(include_str!("shaders/command_vertex.glsl"),
-                                  ShaderType::Vertex));
+        let command_buffer =
+            try!(GlState::build_buffer(
+                include_str!("shaders/command_vertex.glsl"),
+                include_str!("shaders/command_fragment.glsl"),
+                2048));
 
-        let fs = try!(Shader::new(include_str!("shaders/command_fragment.glsl"),
-                                  ShaderType::Fragment));
+        let output_buffer =
+            try!(GlState::build_buffer(
+                include_str!("shaders/output_vertex.glsl"),
+                include_str!("shaders/output_fragment.glsl"),
+                4));
 
-        let program = try!(Program::new(vs, fs));
-
-        let command_buffer = try!(DrawBuffer::new(2048, program));
-
-
-        let vs = try!(Shader::new(include_str!("shaders/output_vertex.glsl"),
-                                  ShaderType::Vertex));
-
-        let fs = try!(Shader::new(include_str!("shaders/output_fragment.glsl"),
-                                  ShaderType::Fragment));
-
-        let program = try!(Program::new(vs, fs));
-
-        let output_buffer = try!(DrawBuffer::new(4, program));
+        let image_load_buffer =
+            try!(GlState::build_buffer(
+                include_str!("shaders/image_load_vertex.glsl"),
+                include_str!("shaders/image_load_fragment.glsl"),
+                4));
 
         let native_width = VRAM_WIDTH_PIXELS as u32;
         let native_height = VRAM_HEIGHT as u32;
@@ -104,19 +103,10 @@ impl GlState {
                                        native_height * upscaling,
                                        texture_storage));
 
-        match Framebuffer::new(&fb_out) {
-            Ok(_) => unsafe {
-                // Clear the FB texture with an arbitrary color. The
-                // VRAM's contents on startup are undefined
-                gl::ClearColor(1.0, 0.5, 0.2, 0.);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
-            },
-            Err(e) => panic!("Can't create framebuffer: {:?}", e),
-        }
-
-        let state = GlState {
+        let mut state = GlState {
             command_buffer: command_buffer,
             output_buffer: output_buffer,
+            image_load_buffer: image_load_buffer,
             config: config,
             fb_texture: fb_texture,
             fb_out: fb_out,
@@ -135,6 +125,20 @@ impl GlState {
         Ok(state)
     }
 
+    fn build_buffer<T>(vertex_shader: &str,
+                       fragment_shader: &str,
+                       capacity: usize) -> Result<DrawBuffer<T>, Error>
+        where T: ::retrogl::vertex::Vertex {
+
+        let vs = try!(Shader::new(vertex_shader, ShaderType::Vertex));
+
+        let fs = try!(Shader::new(fragment_shader, ShaderType::Fragment));
+
+        let program = try!(Program::new(vs, fs));
+
+        DrawBuffer::new(capacity, program)
+    }
+
     fn draw(&mut self) -> Result<(), Error> {
 
         unsafe {
@@ -142,7 +146,9 @@ impl GlState {
             gl::BlendFuncSeparate(gl::ONE,
                                   gl::ZERO,
                                   gl::ONE,
-                                  gl::ZERO)
+                                  gl::ZERO);
+            gl::Enable(gl::SCISSOR_TEST);
+            gl::Disable(gl::BLEND);
         }
 
         let (x, y) = self.config.draw_offset;
@@ -219,7 +225,7 @@ impl GlState {
         }
     }
 
-    fn upload_textures(&self,
+    fn upload_textures(&mut self,
                        top_left: (u16, u16),
                        resolution: (u16, u16),
                        pixel_buffer: &[u16]) -> Result<(), Error> {
@@ -230,7 +236,31 @@ impl GlState {
                                            gl::UNSIGNED_SHORT,
                                            pixel_buffer));
 
-        Ok(())
+        try!(self.image_load_buffer.clear());
+
+        let x_start = top_left.0;
+        let x_end = x_start + resolution.0;
+        let y_start = top_left.1;
+        let y_end = y_start + resolution.1;
+
+        try!(self.image_load_buffer.push_slice(
+            &[ImageLoadVertex { position: [x_start, y_start] },
+              ImageLoadVertex { position: [x_end, y_start] },
+              ImageLoadVertex { position: [x_start, y_end] },
+              ImageLoadVertex { position: [x_end, y_end] },
+              ]));
+
+        try!(self.image_load_buffer.program().uniform1i("fb_texture", 0));
+
+        unsafe {
+            gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::BLEND);
+        }
+
+        // Bind the output framebuffer
+        let _fb = Framebuffer::new(&self.fb_out);
+
+        self.image_load_buffer.draw(gl::TRIANGLE_STRIP)
     }
 }
 
@@ -244,12 +274,6 @@ impl State for GlState {
     }
 
     fn prepare_render(&mut self) {
-
-        unsafe {
-            // XXX no semi-transparency for now
-            gl::Disable(gl::BLEND);
-            gl::Enable(gl::SCISSOR_TEST);
-        }
 
         self.apply_scissor();
 
@@ -340,7 +364,13 @@ impl State for GlState {
                              fb_coord: [fb_x_end, fb_y_start] }])
             .unwrap();
 
-        self.output_buffer.program().uniform1i("fb", 1).unwrap();
+        let depth_24bpp = self.config.display_24bpp as GLint;
+
+        self.output_buffer.program()
+            .uniform1i("fb", 1).unwrap();
+        self.output_buffer.program()
+            .uniform1i("depth_24bpp", depth_24bpp).unwrap();
+
         self.output_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
 
         // Cleanup OpenGL context before returning to the frontend
@@ -518,3 +548,11 @@ struct OutputVertex {
 
 implement_vertex!(OutputVertex,
                   position, fb_coord);
+
+struct ImageLoadVertex {
+    /// Vertex position in VRAM
+    position: [u16; 2],
+}
+
+implement_vertex!(ImageLoadVertex,
+                  position);
