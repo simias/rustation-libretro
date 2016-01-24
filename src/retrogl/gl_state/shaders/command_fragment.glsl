@@ -3,6 +3,9 @@
 // Integer texture 16bit per pixel, stored in the red component
 uniform usampler2D fb_texture;
 
+// Scaling to apply to the dither pattern
+uniform uint dither_scaling;
+
 in vec3 frag_shading_color;
 // Texture page: base offset for texture lookup.
 flat in uvec2 frag_texture_page;
@@ -139,14 +142,14 @@ void main() {
     }
   }
 
-  // Dithering
-  int x_dither = int(gl_FragCoord.x) & 3;
-  int y_dither = int(gl_FragCoord.y) & 3;
+  // 4x4 dithering pattern scaled by `dither_scaling`
+  uint x_dither = (uint(gl_FragCoord.x) / dither_scaling) & 3U;
+  uint y_dither = (uint(gl_FragCoord.y) / dither_scaling) & 3U;
 
   // The multiplication by `frag_dither` will result in
   // `dither_offset` being 0 if dithering is disabled
   int dither_offset =
-    dither_pattern[y_dither * 4 + x_dither] * int(frag_dither);
+    dither_pattern[y_dither * 4U + x_dither] * int(frag_dither);
 
   float dither = float(dither_offset) / 255.;
 

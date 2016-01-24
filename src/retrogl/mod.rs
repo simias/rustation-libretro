@@ -41,6 +41,9 @@ impl RetroGl {
             return Err(());
         }
 
+        // The VRAM's bootup contents are undefined
+        let vram = Rc::new([0xdead; VRAM_PIXELS]);
+
         let config = DrawConfig {
             display_top_left: (0, 0),
             display_resolution: (1024, 512),
@@ -48,7 +51,7 @@ impl RetroGl {
             draw_area_top_left: (0, 0),
             draw_area_resolution: (0, 0),
             draw_offset: (0, 0),
-            vram: Rc::new([0x1f; VRAM_PIXELS]),
+            vram: vram,
         };
 
         Ok(RetroGl {

@@ -46,6 +46,7 @@ impl GlState {
     pub fn from_config(config: DrawConfig) -> Result<GlState, Error> {
         let upscaling = CoreVariables::internal_upscale_factor();
         let depth = CoreVariables::internal_color_depth();
+        let scale_dither = CoreVariables::scale_dither();
 
         info!("Building OpenGL state ({}x internal res., {}bpp)",
               upscaling, depth);
@@ -77,20 +78,21 @@ impl GlState {
         let fb_texture =
             try!(Texture::new(native_width, native_height, gl::R16UI));
 
-        match Framebuffer::new(&fb_texture) {
-            Ok(_) => unsafe {
-                // VRAM's contents on startup are undefined
-                gl::ClearColor(0.3, 0., 0., 0.);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
-            },
-            Err(e) => panic!("Can't create framebuffer: {:?}", e),
-        }
-
         if depth > 16 {
             // Dithering is superfluous when we increase the internal
             // color depth
             try!(command_buffer.disable_attribute("dither"));
         }
+
+        let dither_scaling =
+            if scale_dither {
+                upscaling
+            } else {
+                1
+            };
+
+        try!(command_buffer.program()
+             .uniform1ui("dither_scaling", dither_scaling));
 
         let texture_storage =
             match depth {
@@ -284,7 +286,7 @@ impl State for GlState {
     fn refresh_variables(&mut self) -> bool {
         let upscaling = CoreVariables::internal_upscale_factor();
         let depth = CoreVariables::internal_color_depth();
-
+        let scale_dither = CoreVariables::scale_dither();
 
         let rebuild_fb_out =
             upscaling != self.internal_upscaling ||
@@ -313,11 +315,27 @@ impl State for GlState {
 
             let fb_out = Texture::new(w, h, texture_storage).unwrap();
 
-            // XXX TODO: copy the preview `fb_out` into the new one
-            // in case the game doesn't refresh the screen right
-            // away?
             self.fb_out = fb_out;
+
+            let vram_contents = *self.config.vram;
+
+            // This is a bit wasteful since it'll re-upload the data
+            // to `fb_texture` even though we haven't touched it but
+            // this code is not very performance-critical anyway.
+            self.upload_textures((0, 0),
+                                 (VRAM_WIDTH_PIXELS, VRAM_HEIGHT),
+                                 &vram_contents).unwrap();
         }
+
+        let dither_scaling =
+            if scale_dither {
+                upscaling
+            } else {
+                1
+            };
+
+        self.command_buffer.program()
+            .uniform1ui("dither_scaling", dither_scaling).unwrap();
 
         // If the scaling factor has changed the frontend should be
         // reconfigured. We can't do that here because it could
@@ -336,6 +354,11 @@ impl State for GlState {
 
         // We can now render to the frontend's buffer.
         self.bind_libretro_framebuffer();
+
+        unsafe {
+            gl::ClearColor(1., 0., 0., 0.);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
 
         // Bind `fb_out` to texture unit 1
         self.fb_out.bind(gl::TEXTURE1);

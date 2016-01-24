@@ -285,6 +285,8 @@ libretro_variables!(
             => "Internal upscaling factor; 1|2|3|4|5|6|7|8|9|10",
         internal_color_depth: u8
             => "Internal color depth; 16|32",
+        scale_dither: bool
+            => "Scale dithering pattern with internal resolution; false|true",
         bios_menu: bool
             => "Boot to BIOS menu; false|true",
     });
