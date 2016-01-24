@@ -14,6 +14,7 @@ use rustation::bios::{Bios, BIOS_SIZE};
 use rustation::gpu::{Gpu, VideoClock};
 use rustation::memory::Interconnect;
 use rustation::cpu::Cpu;
+use rustation::padmemcard::gamepad::{Button, ButtonState};
 use rustation::shared::SharedState;
 
 extern crate libc;
@@ -221,11 +222,30 @@ impl Context {
             }
         }
     }
+
+    fn poll_controllers(&mut self) {
+        // XXX we only support pad 0 for now
+        let pad = &mut *self.cpu.pad_profiles()[0];
+
+        for &(retrobutton, psxbutton) in &BUTTON_MAP {
+            let state =
+                if libretro::button_pressed(retrobutton) {
+                    ButtonState::Pressed
+                } else {
+                    ButtonState::Released
+                };
+
+            pad.set_button_state(psxbutton, state);
+        }
+    }
 }
 
 impl libretro::Context for Context {
 
     fn render_frame(&mut self) {
+
+        self.poll_controllers();
+
         let cpu = &mut self.cpu;
         let shared_state = &mut self.shared_state;
 
@@ -334,3 +354,22 @@ fn get_av_info(std: VideoClock, upscaling: u32) -> libretro::SystemAvInfo {
         }
     }
 }
+
+/// Libretro to PlayStation button mapping. Libretro's mapping is
+/// based on the SNES controller so libretro's A button matches the
+/// PlayStation's Circle button.
+const BUTTON_MAP: [(libretro::JoyPadButton, Button); 14] =
+    [(libretro::JoyPadButton::Up, Button::DUp),
+     (libretro::JoyPadButton::Down, Button::DDown),
+     (libretro::JoyPadButton::Left, Button::DLeft),
+     (libretro::JoyPadButton::Right, Button::DRight),
+     (libretro::JoyPadButton::Start, Button::Start),
+     (libretro::JoyPadButton::Select, Button::Select),
+     (libretro::JoyPadButton::A, Button::Circle),
+     (libretro::JoyPadButton::B, Button::Cross),
+     (libretro::JoyPadButton::Y, Button::Square),
+     (libretro::JoyPadButton::X, Button::Triangle),
+     (libretro::JoyPadButton::L, Button::L1),
+     (libretro::JoyPadButton::R, Button::R1),
+     (libretro::JoyPadButton::L2, Button::L2),
+     (libretro::JoyPadButton::R2, Button::R2)];
