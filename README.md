@@ -4,6 +4,9 @@ This is an implementation of the [libretro](http://www.libretro.com/)
 API for the [Rustation PlayStation
 emulator](https://github.com/simias/rustation).
 
+If you want to submit an issue please do so in the main Rustation
+repository. I'm going to try to gather everything there.
+
 ## Build
 
 You'll need [Rust and its package manager

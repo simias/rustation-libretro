@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::default::Default;
 
 use gl;
-use gl::types::{GLuint, GLint, GLsizei, GLenum};
+use gl::types::{GLuint, GLint, GLsizei, GLenum, GLfloat};
 use arrayvec::ArrayVec;
 use libc::c_uint;
 use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
@@ -289,6 +289,12 @@ impl State for GlState {
 
         self.apply_scissor();
 
+        // In case we're upscaling we need to increase the line width
+        // proportionally
+        unsafe {
+            gl::LineWidth(self.internal_upscaling as GLfloat);
+        }
+
         // Bind `fb_texture` to texture unit 0
         self.fb_texture.bind(gl::TEXTURE0);
     }
@@ -346,6 +352,10 @@ impl State for GlState {
 
         self.command_buffer.program()
             .uniform1ui("dither_scaling", dither_scaling).unwrap();
+
+        unsafe {
+            gl::LineWidth(upscaling as GLfloat);
+        }
 
         // If the scaling factor has changed the frontend should be
         // reconfigured. We can't do that here because it could
@@ -420,6 +430,7 @@ impl State for GlState {
             gl::UseProgram(0);
             gl::BindVertexArray(0);
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+            gl::LineWidth(1.);
         }
 
         libretro::gl_frame_done(self.frontend_resolution.0,
