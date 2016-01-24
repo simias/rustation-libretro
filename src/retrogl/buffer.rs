@@ -129,6 +129,10 @@ impl<T: Vertex> DrawBuffer<T> {
 
         get_error()
     }
+
+    pub fn empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 impl<T> DrawBuffer<T> {

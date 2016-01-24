@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::default::Default;
 
 use gl;
-use gl::types::{GLuint, GLint, GLsizei};
+use gl::types::{GLuint, GLint, GLsizei, GLenum};
 use arrayvec::ArrayVec;
 use libc::c_uint;
 use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
@@ -25,6 +25,9 @@ use libretro;
 pub struct GlState {
     /// Buffer used to handle PlayStation GPU draw commands
     command_buffer: DrawBuffer<CommandVertex>,
+    /// Primitive type for the vertices in `command_buffer` (TRIANGLES
+    /// or LINES)
+    command_draw_mode: GLenum,
     /// Buffer used to draw to the frontend's framebuffer
     output_buffer: DrawBuffer<OutputVertex>,
     /// Buffer used to copy textures from `fb_texture` to `fb_out`
@@ -116,6 +119,7 @@ impl GlState {
             frontend_resolution: (0, 0),
             internal_upscaling: upscaling,
             internal_color_depth: depth,
+            command_draw_mode: gl::TRIANGLES,
         };
 
         let vram_contents = *state.config.vram;
@@ -144,6 +148,11 @@ impl GlState {
 
     fn draw(&mut self) -> Result<(), Error> {
 
+        if self.command_buffer.empty() {
+            // Nothing to be done
+            return Ok(())
+        }
+
         unsafe {
             // XXX No semi-transparency support for now
             gl::BlendFuncSeparate(gl::ONE,
@@ -166,7 +175,7 @@ impl GlState {
         // Bind the out framebuffer
         let _fb = Framebuffer::new(&self.fb_out);
 
-        try!(self.command_buffer.draw(gl::TRIANGLES));
+        try!(self.command_buffer.draw(self.command_draw_mode));
 
         self.command_buffer.clear()
     }
@@ -443,16 +452,36 @@ impl Renderer for GlState {
     }
 
     fn push_line(&mut self,
-                 _: &PrimitiveAttributes,
-                 _: &[Vertex; 2]) {
-        unimplemented!()
+                 attributes: &PrimitiveAttributes,
+                 vertices: &[Vertex; 2]) {
+
+        let force_draw =
+            self.command_buffer.remaining_capacity() < 2 ||
+            self.command_draw_mode != gl::LINES;
+
+        if force_draw {
+            self.draw().unwrap();
+            self.command_draw_mode = gl::LINES;
+        }
+
+        let v: ArrayVec<[_; 2]> =
+            vertices.iter().map(|v| CommandVertex::from_vertex(attributes, v))
+            .collect();
+
+        self.command_buffer.push_slice(&v).unwrap();
     }
 
     fn push_triangle(&mut self,
                      attributes: &PrimitiveAttributes,
                      vertices: &[Vertex; 3]) {
-        if self.command_buffer.remaining_capacity() < 3 {
+
+        let force_draw =
+            self.command_buffer.remaining_capacity() < 3 ||
+            self.command_draw_mode != gl::TRIANGLES;
+
+        if force_draw {
             self.draw().unwrap();
+            self.command_draw_mode = gl::TRIANGLES;
         }
 
         let v: ArrayVec<[_; 3]> =
@@ -465,8 +494,13 @@ impl Renderer for GlState {
     fn push_quad(&mut self,
                  attributes: &PrimitiveAttributes,
                  vertices: &[Vertex; 4]) {
-        if self.command_buffer.remaining_capacity() < 6 {
+        let force_draw =
+            self.command_buffer.remaining_capacity() < 6 ||
+            self.command_draw_mode != gl::TRIANGLES;
+
+        if force_draw {
             self.draw().unwrap();
+            self.command_draw_mode = gl::TRIANGLES;
         }
 
         let v: ArrayVec<[_; 4]> =
@@ -516,7 +550,7 @@ impl Renderer for GlState {
         let _fb = Framebuffer::new(&self.fb_out);
 
         // Fill rect commands don't use the draw offset
-        self.command_buffer.program().uniform2i("offset", 0, 0);
+        self.command_buffer.program().uniform2i("offset", 0, 0).unwrap();
 
         unsafe {
             gl::Disable(gl::SCISSOR_TEST);
