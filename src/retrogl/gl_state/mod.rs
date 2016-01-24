@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::default::Default;
 
 use gl;
 use gl::types::{GLuint, GLint, GLsizei};
@@ -172,7 +173,7 @@ impl GlState {
 
     fn apply_scissor(&mut self) {
         let (x, y) = self.config.draw_area_top_left;
-        let (w, h) = self.config.draw_area_resolution;
+        let (w, h) = self.config.draw_area_dimensions;
 
         let upscale = self.internal_upscaling as GLsizei;
 
@@ -200,6 +201,7 @@ impl GlState {
         let h = (h as u32) * upscale;
 
         if w != f_w || h != f_h {
+            // We need to change the frontend's resolution
             let geometry = libretro::GameGeometry {
                 base_width: w as c_uint,
                 base_height: h as c_uint,
@@ -210,11 +212,10 @@ impl GlState {
                 aspect_ratio: 4./3.,
             };
 
-            info!("fb size: {}x{}", w, h);
+            info!("Target framebuffer size: {}x{}", w, h);
 
             libretro::set_geometry(&geometry);
 
-            // We need to change the frontend's resolution
             self.frontend_resolution = (w, h);
         }
 
@@ -229,11 +230,11 @@ impl GlState {
 
     fn upload_textures(&mut self,
                        top_left: (u16, u16),
-                       resolution: (u16, u16),
+                       dimensions: (u16, u16),
                        pixel_buffer: &[u16]) -> Result<(), Error> {
 
         try!(self.fb_texture.set_sub_image(top_left,
-                                           resolution,
+                                           dimensions,
                                            gl::RED_INTEGER,
                                            gl::UNSIGNED_SHORT,
                                            pixel_buffer));
@@ -241,9 +242,9 @@ impl GlState {
         try!(self.image_load_buffer.clear());
 
         let x_start = top_left.0;
-        let x_end = x_start + resolution.0;
+        let x_end = x_start + dimensions.0;
         let y_start = top_left.1;
-        let y_end = y_start + resolution.1;
+        let y_end = y_start + dimensions.1;
 
         try!(self.image_load_buffer.push_slice(
             &[ImageLoadVertex { position: [x_start, y_start] },
@@ -422,12 +423,12 @@ impl Renderer for GlState {
         self.config.draw_offset = (x, y)
     }
 
-    fn set_draw_area(&mut self, top_left: (u16, u16), resolution: (u16, u16)) {
+    fn set_draw_area(&mut self, top_left: (u16, u16), dimensions: (u16, u16)) {
         // Finish drawing anything in the current area
         self.draw().unwrap();
 
         self.config.draw_area_top_left = top_left;
-        self.config.draw_area_resolution = resolution;
+        self.config.draw_area_dimensions = dimensions;
 
         self.apply_scissor();
     }
@@ -474,6 +475,57 @@ impl Renderer for GlState {
 
         self.command_buffer.push_slice(&v[0..3]).unwrap();
         self.command_buffer.push_slice(&v[1..4]).unwrap();
+    }
+
+    fn fill_rect(&mut self,
+                 color: [u8; 3],
+                 top_left: (u16, u16),
+                 dimensions: (u16, u16)) {
+        // Draw pending commands
+        self.draw().unwrap();
+
+        let x_start = top_left.0;
+        let x_end = x_start + dimensions.0;
+        let y_start = top_left.1;
+        let y_end = y_start + dimensions.1;
+
+        // We reuse the normal command processing program since it's
+        // pretty much equivalent to drawing a non-textured polygon
+        let v: ArrayVec<[_; 4]> = [(x_start, y_start),
+                                   (x_end, y_start),
+                                   (x_start, y_end),
+                                   (x_end, y_end)]
+            .iter()
+            .map(|&(x, y)| {
+                CommandVertex {
+                    position: [x as i16, y as i16],
+                    color: color,
+                    // No texture
+                    texture_blend_mode: 0,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        self.command_buffer.push_slice(&v).unwrap();
+
+        // We use texture unit 0
+        self.command_buffer.program().uniform1i("fb_texture", 0).unwrap();
+
+        // Bind the out framebuffer
+        let _fb = Framebuffer::new(&self.fb_out);
+
+        // Fill rect commands don't use the draw offset
+        self.command_buffer.program().uniform2i("offset", 0, 0);
+
+        unsafe {
+            gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::BLEND);
+        }
+
+        self.command_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
+
+        self.command_buffer.clear().unwrap();
     }
 
     fn load_image(&mut self,

@@ -49,7 +49,7 @@ impl RetroGl {
             display_resolution: (1024, 512),
             display_24bpp: false,
             draw_area_top_left: (0, 0),
-            draw_area_resolution: (0, 0),
+            draw_area_dimensions: (0, 0),
             draw_offset: (0, 0),
             vram: vram,
         };
@@ -144,7 +144,7 @@ pub struct DrawConfig {
     display_24bpp: bool,
     draw_offset: (i16, i16),
     draw_area_top_left: (u16, u16),
-    draw_area_resolution: (u16, u16),
+    draw_area_dimensions: (u16, u16),
     vram: Rc<[u16; VRAM_PIXELS]>,
 }
 
