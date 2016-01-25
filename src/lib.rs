@@ -307,6 +307,8 @@ libretro_variables!(
             => "Internal color depth; 16|32",
         scale_dither: bool
             => "Scale dithering pattern with internal resolution; false|true",
+        wireframe: bool
+            => "Wireframe mode; false|true",
         bios_menu: bool
             => "Boot to BIOS menu; false|true",
     });

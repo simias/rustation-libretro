@@ -28,6 +28,8 @@ pub struct GlState {
     /// Primitive type for the vertices in `command_buffer` (TRIANGLES
     /// or LINES)
     command_draw_mode: GLenum,
+    /// Polygon mode (for wireframe)
+    command_polygon_mode: GLenum,
     /// Buffer used to draw to the frontend's framebuffer
     output_buffer: DrawBuffer<OutputVertex>,
     /// Buffer used to copy textures from `fb_texture` to `fb_out`
@@ -51,6 +53,7 @@ impl GlState {
         let upscaling = CoreVariables::internal_upscale_factor();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
+        let wireframe = CoreVariables::wireframe();
 
         info!("Building OpenGL state ({}x internal res., {}bpp)",
               upscaling, depth);
@@ -95,6 +98,13 @@ impl GlState {
                 1
             };
 
+        let command_draw_mode =
+            if wireframe {
+                gl::LINE
+            } else {
+                gl::FILL
+            };
+
         try!(command_buffer.program()
              .uniform1ui("dither_scaling", dither_scaling));
 
@@ -111,6 +121,8 @@ impl GlState {
 
         let mut state = GlState {
             command_buffer: command_buffer,
+            command_draw_mode: gl::TRIANGLES,
+            command_polygon_mode: command_draw_mode,
             output_buffer: output_buffer,
             image_load_buffer: image_load_buffer,
             config: config,
@@ -119,7 +131,6 @@ impl GlState {
             frontend_resolution: (0, 0),
             internal_upscaling: upscaling,
             internal_color_depth: depth,
-            command_draw_mode: gl::TRIANGLES,
         };
 
         let vram_contents = *state.config.vram;
@@ -161,6 +172,7 @@ impl GlState {
                                   gl::ZERO);
             gl::Enable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
         }
 
         let (x, y) = self.config.draw_offset;
@@ -176,6 +188,10 @@ impl GlState {
         let _fb = Framebuffer::new(&self.fb_out);
 
         try!(self.command_buffer.draw(self.command_draw_mode));
+
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+        }
 
         self.command_buffer.clear()
     }
@@ -303,6 +319,7 @@ impl State for GlState {
         let upscaling = CoreVariables::internal_upscale_factor();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
+        let wireframe = CoreVariables::wireframe();
 
         let rebuild_fb_out =
             upscaling != self.internal_upscaling ||
@@ -352,6 +369,13 @@ impl State for GlState {
 
         self.command_buffer.program()
             .uniform1ui("dither_scaling", dither_scaling).unwrap();
+
+        self.command_polygon_mode =
+            if wireframe {
+                gl::LINE
+            } else {
+                gl::FILL
+            };
 
         unsafe {
             gl::LineWidth(upscaling as GLfloat);
