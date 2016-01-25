@@ -772,8 +772,8 @@ fn build_path(cstr: &CStr) -> Option<PathBuf> {
     // On Windows and other non-unices I assume that the path is utf-8
     // encoded
     match cstr.to_str() {
-        Ok(s) => Some(PathBuf::From(s)),
-        Err(e) => {
+        Ok(s) => Some(PathBuf::from(s)),
+        Err(_) => {
             error!("The frontend gave us an invalid path: {}",
                    cstr.to_string_lossy());
             None
