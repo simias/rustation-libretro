@@ -79,11 +79,11 @@ impl GlState {
         let native_width = VRAM_WIDTH_PIXELS as u32;
         let native_height = VRAM_HEIGHT as u32;
 
-        // Integer texture holding the raw VRAM texture contents. We
-        // can't meaningfully upscale it since most games use paletted
+        // Texture holding the raw VRAM texture contents. We can't
+        // meaningfully upscale it since most games use paletted
         // textures.
         let fb_texture =
-            try!(Texture::new(native_width, native_height, gl::R16UI));
+            try!(Texture::new(native_width, native_height, gl::RGB5_A1));
 
         if depth > 16 {
             // Dithering is superfluous when we increase the internal
@@ -255,8 +255,8 @@ impl GlState {
 
         try!(self.fb_texture.set_sub_image(top_left,
                                            dimensions,
-                                           gl::RED_INTEGER,
-                                           gl::UNSIGNED_SHORT,
+                                           gl::RGBA,
+                                           gl::UNSIGNED_SHORT_1_5_5_5_REV,
                                            pixel_buffer));
 
         try!(self.image_load_buffer.clear());
