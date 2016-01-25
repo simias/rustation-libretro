@@ -10,7 +10,7 @@ use rustation::gpu::renderer::{TextureDepth, BlendMode};
 use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
 
 use retrogl::{State, DrawConfig};
-use retrogl::error::Error;
+use retrogl::error::{Error, get_error};
 use retrogl::buffer::DrawBuffer;
 use retrogl::shader::{Shader, ShaderType};
 use retrogl::program::Program;
@@ -172,7 +172,6 @@ impl GlState {
                                   gl::ZERO);
             gl::Enable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
-            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
         }
 
         let (x, y) = self.config.draw_offset;
@@ -188,10 +187,6 @@ impl GlState {
         let _fb = Framebuffer::new(&self.fb_out);
 
         try!(self.command_buffer.draw(self.command_draw_mode));
-
-        unsafe {
-            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-        }
 
         self.command_buffer.clear()
     }
@@ -283,12 +278,19 @@ impl GlState {
         unsafe {
             gl::Disable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
         }
 
         // Bind the output framebuffer
         let _fb = Framebuffer::new(&self.fb_out);
 
-        self.image_load_buffer.draw(gl::TRIANGLE_STRIP)
+        try!(self.image_load_buffer.draw(gl::TRIANGLE_STRIP));
+
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+        }
+
+        get_error()
     }
 }
 
@@ -309,6 +311,7 @@ impl State for GlState {
         // proportionally
         unsafe {
             gl::LineWidth(self.internal_upscaling as GLfloat);
+            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
         }
 
         // Bind `fb_texture` to texture unit 0
@@ -399,11 +402,6 @@ impl State for GlState {
         // We can now render to the frontend's buffer.
         self.bind_libretro_framebuffer();
 
-        unsafe {
-            gl::ClearColor(1., 0., 0., 0.);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-        }
-
         // Bind `fb_out` to texture unit 1
         self.fb_out.bind(gl::TEXTURE1);
 
@@ -411,6 +409,7 @@ impl State for GlState {
         unsafe {
             gl::Disable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
         }
 
         let (fb_x_start, fb_y_start) = self.config.display_top_left;
@@ -590,9 +589,15 @@ impl Renderer for GlState {
         unsafe {
             gl::Disable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
         }
 
+
         self.command_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
+
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+        }
 
         self.command_buffer.clear().unwrap();
     }
