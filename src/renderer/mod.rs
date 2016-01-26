@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::default::Default;
 
 use gl;
@@ -9,7 +8,7 @@ use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
 use rustation::gpu::renderer::{TextureDepth, BlendMode};
 use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
 
-use retrogl::{State, DrawConfig};
+use retrogl::DrawConfig;
 use retrogl::error::{Error, get_error};
 use retrogl::buffer::DrawBuffer;
 use retrogl::shader::{Shader, ShaderType};
@@ -22,7 +21,7 @@ use CoreVariables;
 
 use libretro;
 
-pub struct GlState {
+pub struct GlRenderer {
     /// Buffer used to handle PlayStation GPU draw commands
     command_buffer: DrawBuffer<CommandVertex>,
     /// Primitive type for the vertices in `command_buffer` (TRIANGLES
@@ -48,8 +47,8 @@ pub struct GlState {
     internal_color_depth: u8,
 }
 
-impl GlState {
-    pub fn from_config(config: DrawConfig) -> Result<GlState, Error> {
+impl GlRenderer {
+    pub fn from_config(config: DrawConfig) -> Result<GlRenderer, Error> {
         let upscaling = CoreVariables::internal_upscale_factor();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
@@ -59,19 +58,19 @@ impl GlState {
               upscaling, depth);
 
         let command_buffer =
-            try!(GlState::build_buffer(
+            try!(GlRenderer::build_buffer(
                 include_str!("shaders/command_vertex.glsl"),
                 include_str!("shaders/command_fragment.glsl"),
                 2048));
 
         let output_buffer =
-            try!(GlState::build_buffer(
+            try!(GlRenderer::build_buffer(
                 include_str!("shaders/output_vertex.glsl"),
                 include_str!("shaders/output_fragment.glsl"),
                 4));
 
         let image_load_buffer =
-            try!(GlState::build_buffer(
+            try!(GlRenderer::build_buffer(
                 include_str!("shaders/image_load_vertex.glsl"),
                 include_str!("shaders/image_load_fragment.glsl"),
                 4));
@@ -119,7 +118,7 @@ impl GlState {
                                        native_height * upscaling,
                                        texture_storage));
 
-        let mut state = GlState {
+        let mut state = GlRenderer {
             command_buffer: command_buffer,
             command_draw_mode: gl::TRIANGLES,
             command_polygon_mode: command_draw_mode,
@@ -133,12 +132,14 @@ impl GlState {
             internal_color_depth: depth,
         };
 
-        let vram_contents = *state.config.vram;
+        // Yet an other copy of this 1MB array to make the borrow
+        // checker happy...
+        let vram_contents = Box::new(*state.config.vram);
 
         // Load the VRAM contents into the textures
         try!(state.upload_textures((0, 0),
                                    (VRAM_WIDTH_PIXELS, VRAM_HEIGHT),
-                                   &vram_contents));
+                                   &*vram_contents));
 
         Ok(state)
     }
@@ -292,18 +293,12 @@ impl GlState {
 
         get_error()
     }
-}
 
-impl State for GlState {
-    fn draw_config(&self) -> &DrawConfig {
+    pub fn draw_config(&self) -> &DrawConfig {
         &self.config
     }
 
-    fn renderer_mut(&mut self) -> &mut Renderer {
-        &mut *self
-    }
-
-    fn prepare_render(&mut self) {
+    pub fn prepare_render(&mut self) {
 
         self.apply_scissor();
 
@@ -318,7 +313,7 @@ impl State for GlState {
         self.fb_texture.bind(gl::TEXTURE0);
     }
 
-    fn refresh_variables(&mut self) -> bool {
+    pub fn refresh_variables(&mut self) -> bool {
         let upscaling = CoreVariables::internal_upscale_factor();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
@@ -395,7 +390,7 @@ impl State for GlState {
         return reconfigure_frontend
     }
 
-    fn finalize_frame(&mut self) {
+    pub fn finalize_frame(&mut self) {
         // Draw pending commands
         self.draw().unwrap();
 
@@ -461,7 +456,7 @@ impl State for GlState {
     }
 }
 
-impl Renderer for GlState {
+impl Renderer for GlRenderer {
     fn set_draw_offset(&mut self, x: i16, y: i16) {
         self.config.draw_offset = (x, y)
     }
@@ -616,22 +611,18 @@ impl Renderer for GlState {
 
         // Update the VRAM buffer (this way we won't lose the textures
         // if the GL context gets destroyed)
-        match Rc::get_mut(&mut self.config.vram) {
-            Some(vram) =>
-                for y in 0..h {
-                    for x in 0..w {
-                        let fb_x = x_start + x;
-                        let fb_y = y_start + y;
+        for y in 0..h {
+            for x in 0..w {
+                let fb_x = x_start + x;
+                let fb_y = y_start + y;
 
-                        let fb_w = VRAM_WIDTH_PIXELS as usize;
+                let fb_w = VRAM_WIDTH_PIXELS as usize;
 
-                        let fb_index = fb_y * fb_w + fb_x;
-                        let buffer_index = y * w + x;
+                let fb_index = fb_y * fb_w + fb_x;
+                let buffer_index = y * w + x;
 
-                        vram[fb_index] = pixel_buffer[buffer_index];
-                    }
-                },
-            None => panic!("VRAM is shared!"),
+                self.config.vram[fb_index] = pixel_buffer[buffer_index];
+            }
         }
 
         self.upload_textures(top_left, resolution, pixel_buffer).unwrap();

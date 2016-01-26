@@ -1,7 +1,5 @@
 //! PlayStation OpenGL 3.3 renderer playing nice with libretro
 
-use std::rc::Rc;
-
 use libretro;
 use gl;
 use rustation::gpu::VideoClock;
@@ -9,23 +7,20 @@ use rustation::gpu::renderer::Renderer;
 use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
 use CoreVariables;
 
-use self::dummy_state::DummyState;
-use self::gl_state::GlState;
+use renderer::GlRenderer;
 
 #[macro_use]
-mod vertex;
-mod error;
-mod types;
-mod buffer;
-mod texture;
-mod framebuffer;
-mod shader;
-mod program;
-mod dummy_state;
-mod gl_state;
+pub mod vertex;
+pub mod error;
+pub mod types;
+pub mod buffer;
+pub mod texture;
+pub mod framebuffer;
+pub mod shader;
+pub mod program;
 
 pub struct RetroGl {
-    state: Box<State>,
+    state: GlState,
     video_clock: VideoClock,
 }
 
@@ -42,7 +37,7 @@ impl RetroGl {
         }
 
         // The VRAM's bootup contents are undefined
-        let vram = Rc::new([0xdead; VRAM_PIXELS]);
+        let vram = Box::new([0xdead; VRAM_PIXELS]);
 
         let config = DrawConfig {
             display_top_left: (0, 0),
@@ -56,7 +51,7 @@ impl RetroGl {
 
         Ok(RetroGl {
             // No context until `context_reset` is called
-            state: Box::new(DummyState::from_config(config)),
+            state: GlState::Invalid(config),
             video_clock: video_clock,
         })
     }
@@ -69,10 +64,14 @@ impl RetroGl {
             libretro::hw_context::get_proc_address(s) as *const _
         });
 
-        let config = self.state.draw_config().clone();
+        let config =
+            match self.state {
+                GlState::Valid(ref r) => r.draw_config().clone(),
+                GlState::Invalid(ref c) => c.clone(),
+            };
 
-        match GlState::from_config(config) {
-            Ok(s) => self.state = Box::new(s),
+        match GlRenderer::from_config(config) {
+            Ok(r) => self.state = GlState::Valid(r),
             Err(e) => panic!("Couldn't create RetroGL state: {:?}", e),
         }
     }
@@ -80,23 +79,37 @@ impl RetroGl {
     pub fn context_destroy(&mut self) {
         info!("OpenGL context destroy");
 
-        let config = self.state.draw_config().clone();
+        //let config = self.state.draw_config();
 
-        self.state = Box::new(DummyState::from_config(config));
+        //self.state = Box::new(DummyState::from_config(*config));
     }
 
     pub fn render_frame<F>(&mut self, emulate: F)
         where F: FnOnce(&mut Renderer) {
 
-        self.state.prepare_render();
+        let renderer =
+            match self.state {
+                GlState::Valid(ref mut r) => r,
+                GlState::Invalid(_) =>
+                    panic!("Attempted to render a frame without GL context"),
+            };
 
-        emulate(self.state.renderer_mut());
+        renderer.prepare_render();
 
-        self.state.finalize_frame();
+        emulate(renderer);
+
+        renderer.finalize_frame();
     }
 
     pub fn refresh_variables(&mut self) {
-        let reconfigure_frontend = self.state.refresh_variables();
+        let renderer =
+            match self.state {
+                GlState::Valid(ref mut r) => r,
+                // Nothing to be done if we don't have a GL context
+                GlState::Invalid(_) => return,
+            };
+
+        let reconfigure_frontend = renderer.refresh_variables();
 
         if reconfigure_frontend {
             // The resolution has changed, we must tell the frontend
@@ -126,26 +139,32 @@ impl RetroGl {
     }
 }
 
-pub trait State: Renderer {
-    fn draw_config(&self) -> &DrawConfig;
-    /// Return `true` if the frontend should be reconfigured
-    fn refresh_variables(&mut self) -> bool;
-
-    fn prepare_render(&mut self);
-    fn finalize_frame(&mut self);
-
-    fn renderer_mut(&mut self) -> &mut Renderer;
+/// State machine dealing with OpenGL context
+/// destruction/reconstruction
+enum GlState {
+    /// OpenGL context is ready
+    Valid(GlRenderer),
+    /// OpenGL context has been destroy (or is not yet created)
+    Invalid(DrawConfig),
 }
 
-#[derive(Clone)]
 pub struct DrawConfig {
-    display_top_left: (u16, u16),
-    display_resolution: (u16, u16),
-    display_24bpp: bool,
-    draw_offset: (i16, i16),
-    draw_area_top_left: (u16, u16),
-    draw_area_dimensions: (u16, u16),
-    vram: Rc<[u16; VRAM_PIXELS]>,
+    pub display_top_left: (u16, u16),
+    pub display_resolution: (u16, u16),
+    pub display_24bpp: bool,
+    pub draw_offset: (i16, i16),
+    pub draw_area_top_left: (u16, u16),
+    pub draw_area_dimensions: (u16, u16),
+    pub vram: Box<[u16; VRAM_PIXELS]>,
+}
+
+impl Clone for DrawConfig {
+    fn clone(&self) -> DrawConfig {
+        DrawConfig {
+            vram: Box::new(*self.vram),
+            ..*self
+        }
+    }
 }
 
 const VRAM_PIXELS: usize = VRAM_WIDTH_PIXELS as usize * VRAM_HEIGHT as usize;

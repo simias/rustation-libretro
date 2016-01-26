@@ -1,7 +1,9 @@
 #[macro_use]
 pub mod libretro;
+#[macro_use]
 mod retrogl;
 mod retrolog;
+mod renderer;
 
 use std::path::{Path, PathBuf};
 use std::fs::File;
