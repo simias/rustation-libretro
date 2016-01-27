@@ -37,7 +37,7 @@ impl RetroGl {
         }
 
         // The VRAM's bootup contents are undefined
-        let vram = Box::new([0xdead; VRAM_PIXELS]);
+        let vram = vec![0xdead; VRAM_PIXELS];
 
         let config = DrawConfig {
             display_top_left: (0, 0),
@@ -79,9 +79,14 @@ impl RetroGl {
     pub fn context_destroy(&mut self) {
         info!("OpenGL context destroy");
 
-        //let config = self.state.draw_config();
+        let config =
+        match self.state {
+            GlState::Valid(ref r) => r.draw_config().clone(),
+            // Looks like we didn't have an OpenGL context anyway...
+            GlState::Invalid(_) => return,
+        };
 
-        //self.state = Box::new(DummyState::from_config(*config));
+        self.state = GlState::Invalid(config);
     }
 
     pub fn render_frame<F>(&mut self, emulate: F)
@@ -148,6 +153,7 @@ enum GlState {
     Invalid(DrawConfig),
 }
 
+#[derive(Clone)]
 pub struct DrawConfig {
     pub display_top_left: (u16, u16),
     pub display_resolution: (u16, u16),
@@ -155,16 +161,11 @@ pub struct DrawConfig {
     pub draw_offset: (i16, i16),
     pub draw_area_top_left: (u16, u16),
     pub draw_area_dimensions: (u16, u16),
-    pub vram: Box<[u16; VRAM_PIXELS]>,
-}
-
-impl Clone for DrawConfig {
-    fn clone(&self) -> DrawConfig {
-        DrawConfig {
-            vram: Box::new(*self.vram),
-            ..*self
-        }
-    }
+    /// VRAM is stored in a Vec instead of a `Box<[u16; VRAM_PIXELS]>`
+    /// because with the Box rustc seems to miss an optimization and
+    /// puts a temporary array on the stack which overflows on
+    /// plaftforms with a shallow stack (Windows for instance).
+    pub vram: Vec<u16>,
 }
 
 const VRAM_PIXELS: usize = VRAM_WIDTH_PIXELS as usize * VRAM_HEIGHT as usize;

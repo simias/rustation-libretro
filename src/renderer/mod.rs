@@ -134,12 +134,12 @@ impl GlRenderer {
 
         // Yet an other copy of this 1MB array to make the borrow
         // checker happy...
-        let vram_contents = Box::new(*state.config.vram);
+        let vram_contents = state.config.vram.clone();
 
         // Load the VRAM contents into the textures
         try!(state.upload_textures((0, 0),
                                    (VRAM_WIDTH_PIXELS, VRAM_HEIGHT),
-                                   &*vram_contents));
+                                   &vram_contents));
 
         Ok(state)
     }
@@ -348,14 +348,14 @@ impl GlRenderer {
 
             self.fb_out = fb_out;
 
-            let vram_contents = *self.config.vram;
+            let vram_contents = self.config.vram.clone();
 
             // This is a bit wasteful since it'll re-upload the data
             // to `fb_texture` even though we haven't touched it but
             // this code is not very performance-critical anyway.
             self.upload_textures((0, 0),
                                  (VRAM_WIDTH_PIXELS, VRAM_HEIGHT),
-                                 &vram_contents).unwrap();
+                                 &*vram_contents).unwrap();
         }
 
         let dither_scaling =
