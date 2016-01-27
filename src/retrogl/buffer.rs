@@ -70,7 +70,16 @@ impl<T: Vertex> DrawBuffer<T> {
 
         for attr in attributes {
 
-            let index = try!(self.program.find_attribute(attr.name));
+            let index =
+                match self.program.find_attribute(attr.name) {
+                    Ok(i) => i,
+                    // Don't error out if the shader doesn't use this
+                    // attribute, it could be caused by shader
+                    // optimization if the attribute is unused for
+                    // some reason.
+                    Err(Error::InvalidValue) => continue,
+                    Err(e) => return Err(e),
+                };
 
             unsafe { gl::EnableVertexAttribArray(index) };
 
