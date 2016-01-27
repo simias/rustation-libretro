@@ -51,6 +51,7 @@ impl Texture {
         }
 
         unsafe {
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
             gl::BindTexture(gl::TEXTURE_2D, self.id);
             gl::TexSubImage2D(gl::TEXTURE_2D,
                               0,
