@@ -11,7 +11,7 @@
 /// `Fn` for clarity.
 
 use std::ptr;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::str::FromStr;
 use libc::{c_void, c_char, c_uint, c_float, c_double, size_t, int16_t};
 use std::path::PathBuf;
@@ -120,8 +120,15 @@ pub struct Variable {
     pub value: *const c_char,
 }
 
+#[repr(C)]
+pub struct Message {
+    pub msg: *const c_char,
+    pub frames: c_uint,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
+    SetMessage = 6,
     GetSystemDirectory = 9,
     SetPixelFormat = 10,
     SetHwRender = 14,
@@ -435,6 +442,23 @@ pub fn set_geometry(geom: &GameGeometry) -> bool {
 /// Can destroy the OpenGL context!
 pub unsafe fn set_system_av_info(av_info: &SystemAvInfo) -> bool {
     call_environment(Environment::SetSystemAvInfo, av_info)
+}
+
+/// Display `msg` on the screen for `nframes` frames
+pub fn set_message(nframes: u32, msg: &str) {
+    let msg = CString::new(msg);
+
+    let cstr =
+        match msg.as_ref() {
+            Ok(s) => s.as_ptr(),
+            _ => b"<Invalid log message>" as *const _ as *const c_char,
+        };
+
+    let message = Message { msg: cstr, frames: nframes as c_uint };
+
+    unsafe {
+        call_environment(Environment::SetMessage, &message);
+    }
 }
 
 pub fn variables_need_update() -> bool {
@@ -835,6 +859,7 @@ macro_rules! cstring {
 /// ```rust
 /// let value = MyVariables::some_option();
 /// ```
+#[macro_export]
 macro_rules! libretro_variables {
     (struct $st:ident (prefix = $prefix:expr) {
         $($name:ident : $ty:ty => $str:expr),+$(,)*
@@ -873,4 +898,10 @@ macro_rules! libretro_variables {
                 }
             })+
         })
+}
+
+#[macro_export]
+macro_rules! libretro_message {
+    ($nframes:expr, $($arg:tt)+) =>
+        ($crate::libretro::set_message($nframes, &format!($($arg)+)))
 }

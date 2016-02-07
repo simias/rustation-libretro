@@ -42,6 +42,18 @@ struct Context {
     shared_state: SharedState,
     disc_path: PathBuf,
     video_clock: VideoClock,
+    /// Number of frames output by the emulator (i.e. number of times
+    /// `render_frame` has been called)
+    frame_count: u32,
+    /// When true the internal FPS monitoring in enabled
+    monitor_internal_fps: bool,
+    /// Number of frames we guessed the game rendered internally when
+    /// `monitor_internal_fps` is true. This counter is reset every
+    /// `INTERNAL_FPS_SAMPLE_PERIOD`.
+    internal_frame_count: u32,
+    /// Internal display coordinates in VRAM at the end of the
+    /// previous frame. Used for internal FPS calculations.
+    prev_display_start: (u16, u16),
 }
 
 impl Context {
@@ -57,6 +69,10 @@ impl Context {
             shared_state: shared_state,
             disc_path: disc.to_path_buf(),
             video_clock: video_clock,
+            frame_count: 0,
+            monitor_internal_fps: CoreVariables::display_internal_fps(),
+            internal_frame_count: 0,
+            prev_display_start: (0, 0),
         })
     }
 
@@ -227,7 +243,9 @@ impl Context {
 
     fn poll_controllers(&mut self) {
         // XXX we only support pad 0 for now
-        let pad = &mut *self.cpu.pad_profiles()[0];
+        let pad = &mut *self.cpu.interconnect_mut()
+            .pad_memcard_mut()
+            .pad_profiles()[0];
 
         for &(retrobutton, psxbutton) in &BUTTON_MAP {
             let state =
@@ -246,6 +264,8 @@ impl libretro::Context for Context {
 
     fn render_frame(&mut self) {
 
+        self.frame_count += 1;
+
         self.poll_controllers();
 
         let cpu = &mut self.cpu;
@@ -254,6 +274,32 @@ impl libretro::Context for Context {
         self.retrogl.render_frame(|renderer| {
             cpu.run_until_next_frame(shared_state, renderer);
         });
+
+        if self.monitor_internal_fps {
+            // In order to compute the internal game framerate we
+            // monitor whether the display coordinates have
+            // changed. Since most games use double buffering that
+            // should effectively give us the internal framerate.
+            let display_start = cpu.interconnect().gpu().display_vram_start();
+
+            if display_start != self.prev_display_start {
+                self.internal_frame_count += 1;
+            }
+
+            if self.frame_count % INTERNAL_FPS_SAMPLE_PERIOD == 0 {
+                // We compute the internal FPS relative to the
+                // full-speed video output FPS.
+                let video_fps = video_output_framerate(self.video_clock);
+
+                let internal_fps =
+                    (self.internal_frame_count as f32 * video_fps)
+                    / INTERNAL_FPS_SAMPLE_PERIOD as f32;
+
+                libretro_message!(100, "Internal FPS: {:.2}", internal_fps);
+
+                self.internal_frame_count = 0;
+            }
+        }
     }
 
     fn get_system_av_info(&self) -> libretro::SystemAvInfo {
@@ -263,6 +309,8 @@ impl libretro::Context for Context {
     }
 
     fn refresh_variables(&mut self) {
+        self.monitor_internal_fps = CoreVariables::display_internal_fps();
+
         self.retrogl.refresh_variables();
     }
 
@@ -313,10 +361,28 @@ libretro_variables!(
             => "Wireframe mode; false|true",
         bios_menu: bool
             => "Boot to BIOS menu; false|true",
+        display_internal_fps: bool
+            => "Display internal FPS; false|true"
     });
 
 fn init_variables() {
     CoreVariables::register();
+}
+
+// Precise FPS values for the video output for the given
+// VideoClock. It's actually possible to configure the PlayStation GPU
+// to output with NTSC timings with the PAL clock (and vice-versa)
+// which would make this code invalid but it wouldn't make a lot of
+// sense for a game to do that.
+fn video_output_framerate(std: VideoClock) -> f32 {
+    match std {
+        // 53.690MHz GPU clock frequency, 263 lines per field,
+        // 3413 cycles per line
+        VideoClock::Ntsc => 59.81,
+        // 53.222MHz GPU clock frequency, 314 lines per field,
+        // 3406 cycles per line
+        VideoClock::Pal => 49.76,
+    }
 }
 
 fn get_av_info(std: VideoClock, upscaling: u32) -> libretro::SystemAvInfo {
@@ -325,21 +391,6 @@ fn get_av_info(std: VideoClock, upscaling: u32) -> libretro::SystemAvInfo {
     // output is 640x480
     let max_width = (640 * upscaling) as c_uint;
     let max_height = (480 * upscaling) as c_uint;
-
-    // Precise FPS values for the video output. It's actually possible
-    // to configure the PlayStation GPU to output with NTSC timings
-    // with the PAL clock (and vice-versa) which would make this code
-    // invalid but it wouldn't make a lot of sense for a game to do
-    // that.
-    let fps =
-        match std {
-            // 53.690MHz GPU clock frequency, 263 lines per field,
-            // 3413 cycles per line
-            VideoClock::Ntsc => 59.81,
-            // 53.222MHz GPU clock frequency, 314 lines per field,
-            // 3406 cycles per line
-            VideoClock::Pal => 49.76,
-        };
 
     libretro::SystemAvInfo {
         geometry: libretro::GameGeometry {
@@ -353,7 +404,7 @@ fn get_av_info(std: VideoClock, upscaling: u32) -> libretro::SystemAvInfo {
             aspect_ratio: 4./3.,
         },
         timing: libretro::SystemTiming {
-            fps: fps,
+            fps: video_output_framerate(std) as f64,
             sample_rate: 44_100.
         }
     }
@@ -377,3 +428,6 @@ const BUTTON_MAP: [(libretro::JoyPadButton, Button); 14] =
      (libretro::JoyPadButton::R, Button::R1),
      (libretro::JoyPadButton::L2, Button::L2),
      (libretro::JoyPadButton::R2, Button::R2)];
+
+/// Number of output frames over which the internal FPS is averaged
+const INTERNAL_FPS_SAMPLE_PERIOD: u32 = 32;
