@@ -283,6 +283,7 @@ impl libretro::Context for Context {
             let display_start = cpu.interconnect().gpu().display_vram_start();
 
             if display_start != self.prev_display_start {
+                self.prev_display_start = display_start;
                 self.internal_frame_count += 1;
             }
 
