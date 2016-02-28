@@ -19,18 +19,21 @@ use rustation::cpu::Cpu;
 use rustation::padmemcard::gamepad::{Button, ButtonState};
 use rustation::shared::SharedState;
 
-extern crate libc;
-extern crate gl;
+use cdimage::cue::Cue;
+
 #[macro_use]
 extern crate log;
+extern crate libc;
+extern crate gl;
 extern crate rustation;
 extern crate arrayvec;
+extern crate cdimage;
 
 /// Static system information sent to the frontend on request
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
     library_name: cstring!("Rustation"),
     library_version: rustation::VERSION_CSTR as *const _ as *const c_char,
-    valid_extensions: cstring!("bin"),
+    valid_extensions: cstring!("cue"),
     need_fullpath: false,
     block_extract: false,
 };
@@ -77,8 +80,17 @@ impl Context {
     }
 
     fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
+        let image =
+            match Cue::new(disc) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Couldn't load {}: {}", disc.to_string_lossy(), e);
+                    return Err(());
+                }
+            };
+
         let disc =
-            match Disc::from_path(&disc) {
+            match Disc::new(Box::new(image)) {
                 Ok(d) => d,
                 Err(e) => {
                     error!("Couldn't load {}: {}", disc.to_string_lossy(), e);
