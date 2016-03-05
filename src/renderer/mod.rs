@@ -776,7 +776,7 @@ impl Renderer for GlRenderer {
 #[derive(Default, Debug, Clone, Copy)]
 struct CommandVertex {
     /// Position in PlayStation VRAM coordinates
-    position: [i16; 3],
+    position: [f32; 3],
     /// RGB color, 8bits per component
     color: [u8; 3],
     /// Texture coordinates within the page
@@ -806,7 +806,7 @@ impl CommandVertex {
                    v: &Vertex,
                    z: i16) -> CommandVertex {
         CommandVertex {
-            position: [v.position[0], v.position[1], z],
+            position: v.position,
             color: v.color,
             texture_coord: v.texture_coord,
             texture_page: attributes.texture_page,

@@ -1,4 +1,12 @@
 #[macro_use]
+extern crate log;
+extern crate libc;
+extern crate gl;
+extern crate rustation;
+extern crate arrayvec;
+extern crate cdimage;
+
+#[macro_use]
 pub mod libretro;
 #[macro_use]
 mod retrogl;
@@ -17,19 +25,12 @@ use rustation::bios::{Bios, BIOS_SIZE};
 use rustation::gpu::{Gpu, VideoClock};
 use rustation::memory::Interconnect;
 use rustation::cpu::Cpu;
+use rustation::cpu::gte::precision::PreciseVertex;
 use rustation::padmemcard::gamepad::{Button, ButtonState};
 use rustation::shared::SharedState;
 use rustation::debugger::Debugger;
 
 use cdimage::cue::Cue;
-
-#[macro_use]
-extern crate log;
-extern crate libc;
-extern crate gl;
-extern crate rustation;
-extern crate arrayvec;
-extern crate cdimage;
 
 /// Static system information sent to the frontend on request
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
@@ -43,7 +44,7 @@ const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
 /// Emulator context
 struct Context {
     retrogl: retrogl::RetroGl,
-    cpu: Cpu,
+    cpu: Cpu<PreciseVertex>,
     shared_state: SharedState,
     debugger: Debugger,
     disc_path: PathBuf,
@@ -83,7 +84,7 @@ impl Context {
         })
     }
 
-    fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
+    fn load_disc(disc: &Path) -> Result<(Cpu<PreciseVertex>, VideoClock), ()> {
         let image =
             match Cue::new(disc) {
                 Ok(c) => c,
