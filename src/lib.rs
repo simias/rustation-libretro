@@ -19,6 +19,7 @@ use rustation::memory::Interconnect;
 use rustation::cpu::Cpu;
 use rustation::padmemcard::gamepad::{Button, ButtonState};
 use rustation::shared::SharedState;
+use rustation::debugger::Debugger;
 
 use cdimage::cue::Cue;
 
@@ -44,6 +45,7 @@ struct Context {
     retrogl: retrogl::RetroGl,
     cpu: Cpu,
     shared_state: SharedState,
+    debugger: Debugger,
     disc_path: PathBuf,
     video_clock: VideoClock,
     /// Number of frames output by the emulator (i.e. number of times
@@ -71,6 +73,7 @@ impl Context {
             retrogl: retrogl,
             cpu: cpu,
             shared_state: shared_state,
+            debugger: Debugger::new(),
             disc_path: disc.to_path_buf(),
             video_clock: video_clock,
             frame_count: 0,
@@ -283,9 +286,15 @@ impl libretro::Context for Context {
 
         let cpu = &mut self.cpu;
         let shared_state = &mut self.shared_state;
+        let debugger = &mut self.debugger;
+
+        if libretro::key_pressed(0, libretro::Key::Pause) {
+            // Trigger the debugger
+            debugger.debug(cpu);
+        }
 
         self.retrogl.render_frame(|renderer| {
-            cpu.run_until_next_frame(shared_state, renderer);
+            cpu.run_until_next_frame(debugger, shared_state, renderer);
         });
 
         if self.monitor_internal_fps {
@@ -329,13 +338,12 @@ impl libretro::Context for Context {
     }
 
     fn reset(&mut self) {
-
         match Context::load_disc(&self.disc_path) {
             Ok((cpu, video_clock)) => {
                 info!("Game reset");
                 self.cpu = cpu;
                 self.video_clock = video_clock;
-                self.shared_state.reset();
+                self.shared_state = SharedState::new();
             },
             Err(_) => warn!("Couldn't reset game"),
         }
