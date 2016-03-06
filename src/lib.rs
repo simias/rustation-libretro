@@ -382,6 +382,23 @@ fn init_variables() {
     CoreVariables::register();
 }
 
+libretro_controller_type!(
+    enum PadType {
+        JoyPad = (libretro::InputDevice::JoyPad, 0),
+        DualShock = (libretro::InputDevice::Analog, 0),
+    });
+
+libretro_controller_type!(
+    enum KeyboardType {
+        DebugKeyboard = (libretro::InputDevice::Keyboard, 0),
+    });
+
+fn init_controllers() {
+    libretro_set_controller_info!(PadType,
+                                  PadType,
+                                  KeyboardType);
+}
+
 // Precise FPS values for the video output for the given
 // VideoClock. It's actually possible to configure the PlayStation GPU
 // to output with NTSC timings with the PAL clock (and vice-versa)

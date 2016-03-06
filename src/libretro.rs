@@ -126,8 +126,25 @@ pub struct Message {
     pub frames: c_uint,
 }
 
+#[repr(C)]
+pub struct ControllerDescription {
+    pub desc: *const c_char,
+    pub id: c_uint,
+}
+
+/// The controller description has to be stored in a static array, so
+/// it must be sync.
+unsafe impl Sync for ControllerDescription {
+}
+
+#[repr(C)]
+pub struct ControllerInfo {
+    pub types: *const ControllerDescription,
+    pub num_types: c_uint,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Environment {
+enum Environment {
     SetMessage = 6,
     GetSystemDirectory = 9,
     SetPixelFormat = 10,
@@ -137,6 +154,7 @@ pub enum Environment {
     GetVariableUpdate = 17,
     GetLogInterface = 27,
     SetSystemAvInfo = 32,
+    SetControllerInfo = 35,
     SetGeometry = 37,
 }
 
@@ -482,6 +500,11 @@ pub unsafe fn register_variables(variables: &[Variable]) -> bool {
     call_environment_slice(Environment::SetVariables, variables)
 }
 
+/// `ports` *must* end with a `{ NULL, 0 }` marker
+pub unsafe fn set_controller_info(ports: &[ControllerInfo]) -> bool {
+    call_environment_slice(Environment::SetControllerInfo, ports)
+}
+
 unsafe fn call_environment_mut<T>(which: Environment, var: &mut T) -> bool {
     environment(which as c_uint, var as *mut _ as *mut c_void)
 }
@@ -532,6 +555,7 @@ pub extern "C" fn retro_set_environment(callback: EnvironmentFn) {
     }
 
     ::init_variables();
+    ::init_controllers();
 }
 
 #[no_mangle]
@@ -904,4 +928,55 @@ macro_rules! libretro_variables {
 macro_rules! libretro_message {
     ($nframes:expr, $($arg:tt)+) =>
         ($crate::libretro::set_message($nframes, &format!($($arg)+)))
+}
+
+#[macro_export]
+macro_rules! libretro_controller_type {
+    (enum $en:ident {
+        $($name:ident = ($base:expr, $id:expr)),+$(,)*
+    }) => (
+        enum $en {
+            $($name = (($base as isize) | (($id + 1) << 8))),+,
+        }
+
+        impl $en {
+            fn description() ->
+                &'static [$crate::libretro::ControllerDescription] {
+
+                static CONTROLLER_DESCRIPTION:
+                    &'static [$crate::libretro::ControllerDescription] = &[
+                        $($crate::libretro::ControllerDescription {
+                            desc: cstring!(stringify!($name)),
+                            id:  $en::$name as c_uint,
+                        }),+,
+                    ];
+
+                    CONTROLLER_DESCRIPTION
+            }
+        })
+}
+
+#[macro_export]
+macro_rules! libretro_set_controller_info {
+    ($($controller:ident),+$(,)*) => ({
+        let ports = [
+            $($crate::libretro::ControllerInfo {
+                types: $controller::description().as_ptr(),
+                num_types: $controller::description().len() as c_uint,
+            }),+,
+            // End of table marker
+            $crate::libretro::ControllerInfo {
+                types: ::std::ptr::null() as *const _,
+                num_types: 0,
+            }
+            ];
+
+        let ok = unsafe {
+            $crate::libretro::set_controller_info(&ports)
+        };
+
+        if !ok {
+            warn!("Failed to set controller info");
+        }
+    })
 }
