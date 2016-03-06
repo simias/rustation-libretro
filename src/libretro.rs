@@ -12,7 +12,6 @@
 
 use std::ptr;
 use std::ffi::{CStr, CString};
-use std::str::FromStr;
 use libc::{c_void, c_char, c_uint, c_float, c_double, size_t, int16_t};
 use std::path::PathBuf;
 
@@ -805,8 +804,10 @@ fn build_path(cstr: &CStr) -> Option<PathBuf> {
     }
 }
 
-pub unsafe fn get_variable<T: FromStr>(var: &str,
-                                       var_cstr: *const c_char) -> T {
+pub unsafe fn get_variable<T, E>(var: &str,
+                                 var_cstr: *const c_char,
+                                 parser: fn (&str) -> Result<T, E>) -> T
+{
     let mut v = Variable {
         key: var_cstr as *const _,
         value: ptr::null(),
@@ -821,7 +822,7 @@ pub unsafe fn get_variable<T: FromStr>(var: &str,
 
     let value = CStr::from_ptr(v.value).to_str().unwrap();
 
-    match FromStr::from_str(value) {
+    match parser(value) {
         Ok(v) => v,
         Err(_) => panic!("Couldn't parse variable {}", var),
     }
@@ -839,13 +840,25 @@ macro_rules! cstring {
 /// ```rust
 /// libretro_variables!(
 ///     struct MyVariables (prefix = "mycore") {
-///         some_option: i32 => "Do something; 1|2|3",
-///         enable_something: bool => "Enable something; true|false",
+///         some_option: i32, FromStr::from_str => "Do something; 1|2|3",
+///         enable_stuff: bool, parse_bool => "Enable stuff; enabled|disabled",
 ///     });
+///
+/// fn parse_bool(opt: &str) -> Result<bool, ()> {
+///    match opt {
+///        "true" | "enabled" | "on" => Ok(true),
+///        "false" | "disabled" | "off" => Ok(false),
+///        _ => Err(()),
+///    }
+/// }
+///
 /// ```
 ///
 /// The variable names given to the frontend will be prefixed with
 /// `$prefix` as mandated by libretro.
+///
+/// $parser must be a function that takes an &str and returns a
+/// Result<T, _> where T is the option type.
 ///
 /// The variables can then be registered with the frontend (prefrably
 /// in the `init_variables` callback with:
@@ -862,7 +875,7 @@ macro_rules! cstring {
 #[macro_export]
 macro_rules! libretro_variables {
     (struct $st:ident (prefix = $prefix:expr) {
-        $($name:ident : $ty:ty => $str:expr),+$(,)*
+        $($name:ident : $ty:ty , $parser:expr => $str:expr),+$(,)*
     }) => (
         struct $st;
 
@@ -894,10 +907,12 @@ macro_rules! libretro_variables {
                 let cstr = cstring!(concat!($prefix, '_', stringify!($name)));
 
                 unsafe {
-                    $crate::libretro::get_variable(stringify!($name), cstr)
+                    $crate::libretro::get_variable(stringify!($name),
+                                                   cstr,
+                                                   $parser)
                 }
             })+
-        })
+        });
 }
 
 #[macro_export]

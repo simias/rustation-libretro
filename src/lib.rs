@@ -8,6 +8,7 @@ mod renderer;
 use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::Read;
+use std::str::FromStr;
 
 use libc::{c_char, c_uint};
 
@@ -364,19 +365,41 @@ fn load_game(disc: PathBuf) -> Option<Box<libretro::Context>> {
 
 libretro_variables!(
     struct CoreVariables (prefix = "rustation") {
-        internal_upscale_factor: u32
-            => "Internal upscaling factor; 1|2|3|4|5|6|7|8|9|10",
-        internal_color_depth: u8
-            => "Internal color depth; 16|32",
-        scale_dither: bool
-            => "Scale dithering pattern with internal resolution; false|true",
-        wireframe: bool
-            => "Wireframe mode; false|true",
-        bios_menu: bool
-            => "Boot to BIOS menu; false|true",
-        display_internal_fps: bool
-            => "Display internal FPS; false|true"
+        internal_upscale_factor: u32, parse_upscale
+            => "Internal upscaling factor; \
+                1x (native)|2x|3x|4x|5x|6x|7x|8x|9x|10x",
+        internal_color_depth: u8, parse_color_depth
+            => "Internal color depth; dithered 16bpp (native)|32bpp",
+        scale_dither: bool, parse_bool
+            => "Scale dithering pattern with internal resolution; \
+                enabled|disabled",
+        wireframe: bool, parse_bool
+            => "Wireframe mode; disabled|enabled",
+        bios_menu: bool, parse_bool
+            => "Boot to BIOS menu; disabled|enabled",
+        display_internal_fps: bool, parse_bool
+            => "Display internal FPS; disabled|enabled"
     });
+
+fn parse_upscale(opt: &str) -> Result<u32, <u32 as FromStr>::Err> {
+    let num = opt.trim_matches(|c: char| !c.is_numeric());
+
+    num.parse()
+}
+
+fn parse_color_depth(opt: &str) -> Result<u8, <u8 as FromStr>::Err> {
+    let num = opt.trim_matches(|c: char| !c.is_numeric());
+
+    num.parse()
+}
+
+fn parse_bool(opt: &str) -> Result<bool, ()> {
+    match opt {
+        "true" | "enabled" | "on" => Ok(true),
+        "false" | "disabled" | "off" => Ok(false),
+        _ => Err(()),
+    }
+}
 
 fn init_variables() {
     CoreVariables::register();
