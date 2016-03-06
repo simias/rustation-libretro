@@ -262,7 +262,7 @@ impl Context {
 
         for &(retrobutton, psxbutton) in &BUTTON_MAP {
             let state =
-                if libretro::button_pressed(retrobutton) {
+                if libretro::button_pressed(0, retrobutton) {
                     ButtonState::Pressed
                 } else {
                     ButtonState::Released
