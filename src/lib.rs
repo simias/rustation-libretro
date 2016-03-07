@@ -290,7 +290,7 @@ impl libretro::Context for Context {
 
         if libretro::key_pressed(0, libretro::Key::Pause) {
             // Trigger the debugger
-            debugger.debug(cpu);
+            debugger.trigger_break();
         }
 
         self.retrogl.render_frame(|renderer| {
