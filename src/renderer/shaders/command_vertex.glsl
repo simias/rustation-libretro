@@ -29,12 +29,9 @@ void main() {
 
   // Convert VRAM coordinates (0;1023, 0;511) into OpenGL coordinates
   // (-1;1, -1;1)
-  float xpos = (float(pos.x) / 512.) - 1.0;
-  float ypos = (float(pos.y) / 256.) - 1.0;
-
-  // position.z increases as the primitives near the camera so we
-  // reverse the order to match the common GL convention
-  float zpos = (float(position.z) / 32768.);
+  float xpos = (pos.x / 512.) - 1.0;
+  float ypos = (pos.y / 256.) - 1.0;
+  float zpos = (pos.z / float(0x3ffff));
 
   gl_Position.xyzw = vec4(xpos, ypos, zpos, 1.0);
 
