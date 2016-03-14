@@ -1,10 +1,9 @@
 use gl;
 use gl::types::{GLuint, GLint, GLsizei, GLenum, GLfloat};
-use arrayvec::ArrayVec;
 use libc::c_uint;
-use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
-use rustation::gpu::renderer::{TextureDepth, BlendMode, SemiTransparencyMode};
-use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
+
+use VRAM_WIDTH_PIXELS;
+use VRAM_HEIGHT;
 
 use retrogl::DrawConfig;
 use retrogl::error::{Error, get_error};
@@ -57,8 +56,7 @@ pub struct GlRenderer {
 
 impl GlRenderer {
     pub fn from_config(config: DrawConfig) -> Result<GlRenderer, Error> {
-
-        let upscaling = CoreVariables::internal_upscale_factor();
+        let upscaling = CoreVariables::internal_resolution();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
         let wireframe = CoreVariables::wireframe();
@@ -70,7 +68,7 @@ impl GlRenderer {
             try!(GlRenderer::build_buffer(
                 include_str!("shaders/command_vertex.glsl"),
                 include_str!("shaders/command_fragment.glsl"),
-                2048,
+                VERTEX_BUFFER_LEN,
                 true));
 
         let output_buffer =
@@ -137,7 +135,7 @@ impl GlRenderer {
         let mut state = GlRenderer {
             command_buffer: opaque_command_buffer,
             command_draw_mode: gl::TRIANGLES,
-            semi_transparent_vertices: Vec::with_capacity(2048),
+            semi_transparent_vertices: Vec::with_capacity(VERTEX_BUFFER_LEN),
             semi_transparency_mode: SemiTransparencyMode::Average,
             command_polygon_mode: command_draw_mode,
             output_buffer: output_buffer,
@@ -181,18 +179,9 @@ impl GlRenderer {
 
     fn draw(&mut self) -> Result<(), Error> {
 
-        if self.command_buffer.empty() {
+        if self.command_buffer.empty() && self.semi_transparent_vertices.is_empty(){
             // Nothing to be done
             return Ok(())
-        }
-
-        unsafe {
-            // XXX No semi-transparency support for now
-            gl::BlendFuncSeparate(gl::ONE,
-                                  gl::ZERO,
-                                  gl::ONE,
-                                  gl::ZERO);
-            gl::Disable(gl::BLEND);
         }
 
         let (x, y) = self.config.draw_offset;
@@ -212,12 +201,23 @@ impl GlRenderer {
         }
 
         // First we draw the opaque vertices
-        try!(self.command_buffer.program()
-             .uniform1ui("draw_semi_transparent", 0));
+        if !self.command_buffer.empty() {
+            unsafe {
+                gl::BlendFuncSeparate(gl::ONE,
+                                      gl::ZERO,
+                                      gl::ONE,
+                                      gl::ZERO);
+                gl::Disable(gl::BLEND);
+            }
 
-        try!(self.command_buffer.draw(self.command_draw_mode));
+            
+            try!(self.command_buffer.program()
+                 .uniform1ui("draw_semi_transparent", 0));
 
-        try!(self.command_buffer.clear());
+            try!(self.command_buffer.draw(self.command_draw_mode));
+
+            try!(self.command_buffer.clear());
+        }
 
         // Then the semi-transparent vertices
         if !self.semi_transparent_vertices.is_empty() {
@@ -258,15 +258,15 @@ impl GlRenderer {
                 gl::Enable(gl::BLEND);
             }
 
-            try!(self.command_buffer.program()
-                 .uniform1ui("draw_semi_transparent", 1));
+            (self.command_buffer.program()
+             .uniform1ui("draw_semi_transparent", 1)).unwrap();
 
-            try!(self.command_buffer
-                 .push_slice(&self.semi_transparent_vertices));
+            (self.command_buffer
+                 .push_slice(&self.semi_transparent_vertices)).unwrap();
 
-            try!(self.command_buffer.draw(self.command_draw_mode));
+            (self.command_buffer.draw(self.command_draw_mode)).unwrap();
 
-            try!(self.command_buffer.clear());
+            (self.command_buffer.clear()).unwrap();
             self.semi_transparent_vertices.clear();
         }
 
@@ -378,14 +378,58 @@ impl GlRenderer {
         get_error()
     }
 
+    pub fn upload_vram_window(&mut self,
+                              top_left: (u16, u16),
+                              dimensions: (u16, u16),
+                              pixel_buffer: &[u16]) -> Result<(), Error> {
+
+        try!(self.fb_texture.set_sub_image_window(top_left,
+                                                  dimensions,
+                                                  VRAM_WIDTH_PIXELS as usize,
+                                                  gl::RGBA,
+                                                  gl::UNSIGNED_SHORT_1_5_5_5_REV,
+                                                  pixel_buffer));
+
+        try!(self.image_load_buffer.clear());
+
+        let x_start = top_left.0;
+        let x_end = x_start + dimensions.0;
+        let y_start = top_left.1;
+        let y_end = y_start + dimensions.1;
+
+        try!(self.image_load_buffer.push_slice(
+            &[ImageLoadVertex { position: [x_start, y_start] },
+              ImageLoadVertex { position: [x_end, y_start] },
+              ImageLoadVertex { position: [x_start, y_end] },
+              ImageLoadVertex { position: [x_end, y_end] },
+              ]));
+
+        try!(self.image_load_buffer.program().uniform1i("fb_texture", 0));
+
+        unsafe {
+            gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+        }
+
+        // Bind the output framebuffer
+        let _fb = Framebuffer::new(&self.fb_out);
+
+        try!(self.image_load_buffer.draw(gl::TRIANGLE_STRIP));
+
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+            gl::Enable(gl::SCISSOR_TEST);
+        }
+
+        get_error()
+    }
+
     pub fn draw_config(&self) -> &DrawConfig {
         &self.config
     }
 
     pub fn prepare_render(&mut self) {
-
-        self.apply_scissor();
-
         // In case we're upscaling we need to increase the line width
         // proportionally
         unsafe {
@@ -398,12 +442,14 @@ impl GlRenderer {
             gl::BlendColor(0.25, 0.25, 0.25, 0.5);
         }
 
+        self.apply_scissor();
+
         // Bind `fb_texture` to texture unit 0
         self.fb_texture.bind(gl::TEXTURE0);
     }
 
     pub fn refresh_variables(&mut self) -> bool {
-        let upscaling = CoreVariables::internal_upscale_factor();
+        let upscaling = CoreVariables::internal_resolution();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
         let wireframe = CoreVariables::wireframe();
@@ -544,6 +590,7 @@ impl GlRenderer {
             gl::BindVertexArray(0);
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
             gl::LineWidth(1.);
+            gl::ClearColor(0., 0., 0., 0.);
         }
 
         libretro::gl_frame_done(self.frontend_resolution.0,
@@ -556,16 +603,23 @@ impl GlRenderer {
     fn maybe_force_draw(&mut self,
                         nvertices: usize,
                         draw_mode: GLenum,
-                        attributes: &PrimitiveAttributes) {
+                        semi_transparent: bool,
+                        semi_transparency_mode: SemiTransparencyMode) {
+
+        let semi_transparent_remaining_capacity =
+            self.semi_transparent_vertices.capacity()
+            - self.semi_transparent_vertices.len();
+
         let force_draw =
             // Check if we have enough room left in the buffer
             self.command_buffer.remaining_capacity() < nvertices ||
+            semi_transparent_remaining_capacity < nvertices ||
             // Check if we're changing the draw mode (line <=> triangle)
             self.command_draw_mode != draw_mode ||
             // Check if we're changing the semi-transparency mode
-            (attributes.semi_transparent &&
+            (semi_transparent &&
              !self.semi_transparent_vertices.is_empty() &&
-             self.semi_transparency_mode != attributes.semi_transparency_mode);
+             self.semi_transparency_mode != semi_transparency_mode);
 
         if force_draw {
             self.draw().unwrap();
@@ -573,21 +627,21 @@ impl GlRenderer {
             // Update the state machine for the next primitive
             self.command_draw_mode = draw_mode;
 
-            if attributes.semi_transparent {
-                self.semi_transparency_mode = attributes.semi_transparency_mode;
+            if semi_transparent {
+                self.semi_transparency_mode = semi_transparency_mode;
             }
         }
     }
-}
 
-impl Renderer for GlRenderer {
-    fn set_draw_offset(&mut self, x: i16, y: i16) {
+    pub fn set_draw_offset(&mut self, x: i16, y: i16) {
         // Finish drawing anything with the current offset
         self.draw().unwrap();
         self.config.draw_offset = (x, y)
     }
 
-    fn set_draw_area(&mut self, top_left: (u16, u16), dimensions: (u16, u16)) {
+    pub fn set_draw_area(&mut self,
+                         top_left: (u16, u16),
+                         dimensions: (u16, u16)) {
         // Finish drawing anything in the current area
         self.draw().unwrap();
 
@@ -597,114 +651,81 @@ impl Renderer for GlRenderer {
         self.apply_scissor();
     }
 
-    fn set_display_mode(&mut self,
-                        top_left: (u16, u16),
-                        resolution: (u16, u16),
-                        depth_24bpp: bool) {
+    pub fn set_display_mode(&mut self,
+                            top_left: (u16, u16),
+                            resolution: (u16, u16),
+                            depth_24bpp: bool) {
         self.config.display_top_left = top_left;
         self.config.display_resolution = resolution;
         self.config.display_24bpp = depth_24bpp;
     }
 
-    fn push_line(&mut self,
-                 attributes: &PrimitiveAttributes,
-                 vertices: &[Vertex; 2]) {
+    pub fn push_triangle(&mut self,
+                         mut v: [CommandVertex; 3],
+                         semi_transparency_mode: SemiTransparencyMode) {
 
-        self.maybe_force_draw(2, gl::LINES, attributes);
+        self.maybe_force_draw(3, gl::TRIANGLES,
+                              v[0].semi_transparent == 1,
+                              semi_transparency_mode);
 
         let z = self.primitive_ordering;
 
         self.primitive_ordering += 1;
 
-        let iter =
-            vertices.iter().map(|v|
-                                CommandVertex::from_vertex(attributes, v, z));
-
-        if attributes.semi_transparent {
-            self.semi_transparent_vertices.extend(iter);
-        } else {
-            let v: ArrayVec<[_; 2]> = iter.collect();
-
-            self.command_buffer.push_slice(&v).unwrap();
+        for i in &mut v {
+            i.position[2] = z;
         }
-    }
-
-    fn push_triangle(&mut self,
-                     attributes: &PrimitiveAttributes,
-                     vertices: &[Vertex; 3]) {
-
-        self.maybe_force_draw(3, gl::TRIANGLES, attributes);
-
-        let z = self.primitive_ordering;
-
-        self.primitive_ordering += 1;
-
-        let v: ArrayVec<[_; 3]> =
-            vertices.iter().map(|v|
-                                CommandVertex::from_vertex(attributes, v, z))
-            .collect();
 
         let needs_opaque_draw =
-            !attributes.semi_transparent ||
+            !(v[0].semi_transparent == 1) ||
             // Textured semi-transparent polys can contain opaque
             // texels (when bit 15 of the color is set to
             // 0). Therefore they're drawn twice, once for the opaque
             // texels and once for the semi-transparent ones
-            attributes.blend_mode != BlendMode::None;
+            v[0].texture_blend_mode != 0;
 
         if needs_opaque_draw {
             self.command_buffer.push_slice(&v).unwrap();
         }
 
-        if attributes.semi_transparent {
+        if v[0].semi_transparent == 1 {
             self.semi_transparent_vertices.extend_from_slice(&v);
         }
     }
 
-    fn push_quad(&mut self,
-                 attributes: &PrimitiveAttributes,
-                 vertices: &[Vertex; 4]) {
+    pub fn push_line(&mut self,
+                     mut v: [CommandVertex; 2],
+                     semi_transparency_mode: SemiTransparencyMode) {
 
-        self.maybe_force_draw(6, gl::TRIANGLES, attributes);
+        self.maybe_force_draw(2, gl::LINES,
+                              v[0].semi_transparent == 1,
+                              semi_transparency_mode);
 
         let z = self.primitive_ordering;
 
         self.primitive_ordering += 1;
 
-        let v: ArrayVec<[_; 4]> =
-            vertices.iter().map(|v|
-                                CommandVertex::from_vertex(attributes, v, z))
-            .collect();
-
-        let needs_opaque_draw =
-            !attributes.semi_transparent ||
-            // Textured semi-transparent polys can contain opaque
-            // texels (when bit 15 of the color is set to
-            // 0). Therefore they're drawn twice, once for the opaque
-            // texels and once for the semi-transparent ones
-            attributes.blend_mode != BlendMode::None;
-
-        if needs_opaque_draw {
-            self.command_buffer.push_slice(&v[0..3]).unwrap();
-            self.command_buffer.push_slice(&v[1..4]).unwrap();
+        for i in &mut v {
+            i.position[2] = z;
         }
 
-        if attributes.semi_transparent {
-            self.semi_transparent_vertices.extend_from_slice(&v[0..3]);
-            self.semi_transparent_vertices.extend_from_slice(&v[1..4]);
+        if v[0].semi_transparent == 1 {
+            self.semi_transparent_vertices.extend_from_slice(&v);
+        } else {
+            self.command_buffer.push_slice(&v).unwrap();
         }
     }
 
-    fn fill_rect(&mut self,
-                 color: [u8; 3],
-                 top_left: (u16, u16),
-                 dimensions: (u16, u16)) {
+    pub fn fill_rect(&mut self,
+                     color: [u8; 3],
+                     top_left: (u16, u16),
+                     dimensions: (u16, u16)) {
         // Draw pending commands
         self.draw().unwrap();
 
-        // Fill rect ignores the draw area. Save the previous scissor
-        // settings and reconfigure the scissor box to the fill
-        // rectangle insteadd.
+        // Fill rect ignores the draw area. Save the previous value
+        // and reconfigure the scissor box to the fill rectangle
+        // insteadd.
         let draw_area_top_left = self.config.draw_area_top_left;
         let draw_area_dimensions = self.config.draw_area_dimensions;
 
@@ -713,22 +734,16 @@ impl Renderer for GlRenderer {
 
         self.apply_scissor();
 
-        // ClearColor takes normalized floating point color components
-        let clear_color: ArrayVec<[_; 3]> =
-            color.iter().map(|&c| (c as f32) / 255.)
-            .collect();
-
         {
             // Bind the out framebuffer
             let _fb = Framebuffer::new(&self.fb_out);
 
             unsafe {
-                gl::ClearColor(clear_color[0],
-                               clear_color[1],
-                               clear_color[2],
-                               // XXX Not entirely sure what happens
-                               // to the mask bit in fill_rect. No$
-                               // seems to say that it's set to 0.
+                gl::ClearColor(color[0] as f32 / 255.,
+                               color[1] as f32 / 255.,
+                               color[2] as f32 / 255.,
+                               // XXX Not entirely sure what happens to
+                               // the mask bit in fill_rect commands
                                0.);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
@@ -741,91 +756,64 @@ impl Renderer for GlRenderer {
         self.apply_scissor();
     }
 
-    fn load_image(&mut self,
-                  top_left: (u16, u16),
-                  resolution: (u16, u16),
-                  pixel_buffer: &[u16]) {
+    pub fn copy_rect(&mut self,
+                     source_top_left: (u16, u16),
+                     target_top_left: (u16, u16),
+                     dimensions: (u16, u16)) {
+
+        // Draw pending commands
         self.draw().unwrap();
 
-        let x_start = top_left.0 as usize;
-        let y_start = top_left.1 as usize;
+        let upscale = self.internal_upscaling;
 
-        let w = resolution.0 as usize;
-        let h = resolution.1 as usize;
+        let src_x = source_top_left.0 as GLint * upscale as GLint;
+        let src_y = source_top_left.1 as GLint * upscale as GLint;
+        let dst_x = target_top_left.0 as GLint * upscale as GLint;
+        let dst_y = target_top_left.1 as GLint * upscale as GLint;
 
-        // Update the VRAM buffer (this way we won't lose the textures
-        // if the GL context gets destroyed)
-        for y in 0..h {
-            for x in 0..w {
-                let fb_x = x_start + x;
-                let fb_y = y_start + y;
+        let w = dimensions.0 as GLsizei * upscale as GLsizei;
+        let h = dimensions.1 as GLsizei * upscale as GLsizei;
 
-                let fb_w = VRAM_WIDTH_PIXELS as usize;
-
-                let fb_index = fb_y * fb_w + fb_x;
-                let buffer_index = y * w + x;
-
-                self.config.vram[fb_index] = pixel_buffer[buffer_index];
-            }
+        // XXX CopyImageSubData gives undefined results if the source
+        // and target area overlap, this should be handled
+        // explicitely
+        unsafe {
+            gl::CopyImageSubData(self.fb_out.id(), gl::TEXTURE_2D, 0, src_x, src_y, 0,
+                                 self.fb_out.id(), gl::TEXTURE_2D, 0, dst_x, dst_y, 0,
+                                 w, h, 1);
         }
 
-        self.upload_textures(top_left, resolution, pixel_buffer).unwrap();
+        get_error().unwrap();
     }
 }
 
 #[derive(Default, Debug, Clone, Copy)]
-struct CommandVertex {
+pub struct CommandVertex {
     /// Position in PlayStation VRAM coordinates
-    position: [i16; 3],
+    pub position: [i16; 3],
     /// RGB color, 8bits per component
-    color: [u8; 3],
+    pub color: [u8; 3],
     /// Texture coordinates within the page
-    texture_coord: [u16; 2],
+    pub texture_coord: [u16; 2],
     /// Texture page (base offset in VRAM used for texture lookup)
-    texture_page: [u16; 2],
+    pub texture_page: [u16; 2],
     /// Color Look-Up Table (palette) coordinates in VRAM
-    clut: [u16; 2],
+    pub clut: [u16; 2],
     /// Blending mode: 0: no texture, 1: raw-texture, 2: texture-blended
-    texture_blend_mode: u8,
+    pub texture_blend_mode: u8,
     /// Right shift from 16bits: 0 for 16bpp textures, 1 for 8bpp, 2
     /// for 4bpp
-    depth_shift: u8,
+    pub depth_shift: u8,
     /// True if dithering is enabled for this primitive
-    dither: u8,
+    pub dither: u8,
     /// 0: primitive is opaque, 1: primitive is semi-transparent
-    semi_transparent: u8,
+    pub semi_transparent: u8,
 }
 
 implement_vertex!(CommandVertex,
                   position, color, texture_page,
                   texture_coord, clut, texture_blend_mode,
                   depth_shift, dither, semi_transparent);
-
-impl CommandVertex {
-    fn from_vertex(attributes: &PrimitiveAttributes,
-                   v: &Vertex,
-                   z: i16) -> CommandVertex {
-        CommandVertex {
-            position: [v.position[0], v.position[1], z],
-            color: v.color,
-            texture_coord: v.texture_coord,
-            texture_page: attributes.texture_page,
-            clut: attributes.clut,
-            texture_blend_mode: match attributes.blend_mode {
-                BlendMode::None => 0,
-                BlendMode::Raw => 1,
-                BlendMode::Blended => 2,
-            },
-            depth_shift: match attributes.texture_depth {
-                TextureDepth::T4Bpp => 2,
-                TextureDepth::T8Bpp => 1,
-                TextureDepth::T16Bpp => 0,
-            },
-            dither: attributes.dither as u8,
-            semi_transparent: attributes.semi_transparent as u8,
-        }
-    }
-}
 
 struct OutputVertex {
     /// Vertex position on the screen
@@ -844,3 +832,21 @@ struct ImageLoadVertex {
 
 implement_vertex!(ImageLoadVertex,
                   position);
+
+
+/// Semi-transparency modes supported by the PlayStation GPU
+/// Copied from Rustation's code
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SemiTransparencyMode {
+    /// Source / 2 + destination / 2
+    Average = 0,
+    /// Source + destination
+    Add = 1,
+    /// Destination - source
+    SubstractSource = 2,
+    /// Destination + source / 4
+    AddQuarterSource = 3,
+}
+
+/// How many vertices we buffer before forcing a draw
+const VERTEX_BUFFER_LEN: usize = 2048;

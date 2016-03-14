@@ -23,6 +23,7 @@ pub enum Error {
 }
 
 pub fn get_error() -> Result<(), Error> {
+    let e =
     match unsafe { gl::GetError() } {
         gl::NO_ERROR => Ok(()),
         gl::INVALID_ENUM => Err(Error::InvalidEnum),
@@ -32,7 +33,13 @@ pub fn get_error() -> Result<(), Error> {
             Err(Error::InvalidFramebufferOperatior),
         gl::OUT_OF_MEMORY => Err(Error::OutOfMemory),
         n => Err(Error::Unknown(n)),
+    };
+
+    if let Err(e) = e {
+        println!("GL error {:?}", e);
     }
+
+    e
 }
 
 /// Return `Ok(v)` if no OpenGL error flag is active

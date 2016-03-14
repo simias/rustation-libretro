@@ -46,9 +46,9 @@ impl Texture {
                             ty: GLenum,
                             data: &[T]) -> Result<(), Error> {
 
-        if data.len() != (resolution.0 as usize * resolution.1 as usize) {
-            panic!("Invalid texture sub_image size");
-        }
+        // if data.len() != (resolution.0 as usize * resolution.1 as usize) {
+        //     panic!("Invalid texture sub_image size");
+        // }
 
         unsafe {
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
@@ -65,6 +65,33 @@ impl Texture {
         }
 
         get_error()
+    }
+
+    pub fn set_sub_image_window<T>(&self,
+                                   top_left: (u16, u16),
+                                   resolution: (u16, u16),
+                                   row_len: usize,
+                                   format: GLenum,
+                                   ty: GLenum,
+                                   data: &[T]) -> Result<(), Error> {
+
+        let (x, y) = top_left;
+
+        let index = (y as usize) * row_len + (x as usize);
+
+        let data = &data[index..];
+
+        unsafe {
+            gl::PixelStorei(gl::UNPACK_ROW_LENGTH, row_len as GLint);
+        }
+
+        let r = self.set_sub_image(top_left, resolution, format, ty, data);
+
+        unsafe {
+            gl::PixelStorei(gl::UNPACK_ROW_LENGTH, 0);
+        }
+
+        r
     }
 
     pub unsafe fn id(&self) -> GLuint {
