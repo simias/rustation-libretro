@@ -33,25 +33,6 @@ pub trait Context {
     fn gl_context_destroy(&mut self);
 }
 
-/// Global context instance holding our emulator state. Libretro 1
-/// doesn't support multi-instancing
-static mut static_context: *mut Context = &mut dummy::Context;
-
-unsafe fn set_context(context: Box<Context>) {
-    static_context = Box::into_raw(context);
-}
-
-unsafe fn drop_context() {
-    Box::from_raw(static_context);
-    static_context = &mut dummy::Context;
-}
-
-fn context() -> &'static mut Context {
-    unsafe {
-        &mut *static_context
-    }
-}
-
 #[repr(C)]
 pub struct SystemInfo {
    pub library_name: *const c_char,
@@ -357,11 +338,11 @@ pub mod hw_context {
     }
 
     pub extern "C" fn reset() {
-        super::context().gl_context_reset();
+        ::renderer().context_reset();
     }
 
     pub extern "C" fn context_destroy() {
-        super::context().gl_context_destroy();
+        ::renderer().context_destroy();
     }
 
     pub extern "C" fn dummy_get_current_framebuffer() -> uintptr_t {
@@ -501,10 +482,22 @@ pub mod log {
 //*******************************************
 
 static mut video_refresh: VideoRefreshFn = dummy::video_refresh;
-static mut input_poll: InputPollFn = dummy::input_poll;
 static mut input_state: InputStateFn = dummy::input_state;
 static mut audio_sample_batch: AudioSampleBatchFn = dummy::audio_sample_batch;
 static mut environment: EnvironmentFn = dummy::environment;
+
+pub fn set_environment(callback: EnvironmentFn) {
+    unsafe {
+        environment = callback
+    }
+}
+
+
+pub fn set_video_refresh(callback: VideoRefreshFn) {
+    unsafe {
+        video_refresh = callback
+    }
+}
 
 //*******************************
 // Higher level helper functions
@@ -641,224 +634,6 @@ unsafe fn call_environment<T>(which: Environment, var: &T) -> bool {
 
 unsafe fn call_environment_slice<T>(which: Environment, var: &[T]) -> bool {
     environment(which as c_uint, var.as_ptr() as *const _ as *mut c_void)
-}
-
-/// Cast a mutable pointer into a mutable reference, return None if
-/// it's NULL.
-fn ptr_as_mut_ref<'a, T>(v: *mut T) -> Option<&'a mut T> {
-
-    if v.is_null() {
-        None
-    } else {
-        Some(unsafe { &mut *v })
-    }
-}
-
-/// Cast a const pointer into a reference, return None if it's NULL.
-fn ptr_as_ref<'a, T>(v: *const T) -> Option<&'a T> {
-
-    if v.is_null() {
-        None
-    } else {
-        Some(unsafe { &*v })
-    }
-}
-
-//**********************************************
-// Libretro entry points called by the frontend
-//**********************************************
-
-#[no_mangle]
-pub extern "C" fn retro_api_version() -> c_uint {
-    // We implement the version 1 of the API
-    1
-}
-
-#[no_mangle]
-pub extern "C" fn retro_set_environment(callback: EnvironmentFn) {
-    unsafe {
-        environment = callback
-    }
-
-    ::init_variables();
-}
-
-#[no_mangle]
-pub extern "C" fn retro_set_video_refresh(callback: VideoRefreshFn) {
-    unsafe {
-        video_refresh = callback
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn retro_set_audio_sample(_: AudioSampleFn) {
-}
-
-#[no_mangle]
-pub extern "C" fn retro_set_audio_sample_batch(callback: AudioSampleBatchFn) {
-    unsafe {
-        audio_sample_batch = callback
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn retro_set_input_poll(callback: InputPollFn) {
-    unsafe {
-        input_poll = callback
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn retro_set_input_state(callback: InputStateFn) {
-    unsafe {
-        input_state = callback
-    }
-}
-
-static mut first_init: bool = true;
-
-#[no_mangle]
-pub extern "C" fn retro_init() {
-    // retro_init can potentially be called several times even if the
-    // library hasn't been unloaded (statics are not reset etc...)
-    // which makes it rather useless in my opinion. Let's change that.
-
-    unsafe {
-        if first_init {
-            ::init();
-            first_init = false;
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn retro_deinit() {
-    // XXX Should I reset the callbacks to the dummy implementations
-    // here?
-}
-
-#[no_mangle]
-pub extern "C" fn retro_get_system_info(info: *mut SystemInfo) {
-    let info = ptr_as_mut_ref(info).unwrap();
-
-    // Strings must be static and, of course, 0-terminated
-    *info = ::SYSTEM_INFO;
-}
-
-#[no_mangle]
-pub extern "C" fn retro_get_system_av_info(info: *mut SystemAvInfo) {
-    let info = ptr_as_mut_ref(info).unwrap();
-
-    *info = context().get_system_av_info();
-}
-
-#[no_mangle]
-pub extern "C" fn retro_set_controller_port_device(_port: c_uint,
-                                                   _device: c_uint) {
-    debug!("port device: {} {}", _port, _device);
-}
-
-#[no_mangle]
-pub extern "C" fn retro_reset() {
-    context().reset();
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn retro_run() {
-    input_poll();
-
-    let context = context();
-
-    if variables_need_update() {
-        context.refresh_variables();
-    }
-
-    context.render_frame();
-}
-
-#[no_mangle]
-pub extern "C" fn retro_serialize_size() -> size_t {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn retro_serialize(_data: *mut c_void,
-                                  _size: size_t) -> bool {
-    false
-}
-
-#[no_mangle]
-pub extern "C" fn retro_unserialize(_data: *const c_void,
-                                    _size: size_t) -> bool {
-    false
-}
-
-#[no_mangle]
-pub extern "C" fn retro_cheat_reset() {
-}
-
-#[no_mangle]
-pub fn retro_cheat_set(_index: c_uint,
-                       _enabled: bool,
-                       _code: *const c_char) {
-}
-
-#[no_mangle]
-pub extern "C" fn retro_load_game(info: *const GameInfo) -> bool {
-    let info = ptr_as_ref(info).unwrap();
-
-    if info.path.is_null() {
-        warn!("No path in GameInfo!");
-        return false;
-    }
-
-    let path = unsafe { CStr::from_ptr(info.path) };
-
-    let path =
-        match build_path(path) {
-            Some(p) => p,
-            None => return false,
-        };
-
-    match ::load_game(path) {
-        Some(c) => {
-            unsafe {
-                set_context(c);
-            }
-            true
-        }
-        None => {
-            error!("Couldn't load game!");
-            false
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn retro_load_game_special(_type: c_uint,
-                                          _info: *const GameInfo,
-                                          _num_info: size_t) -> bool {
-    false
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn retro_unload_game()  {
-    drop_context();
-}
-
-#[no_mangle]
-pub extern "C" fn retro_get_region() -> c_uint {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn retro_get_memory_data(_id: c_uint) -> *mut c_void {
-    ptr::null_mut()
-}
-
-#[no_mangle]
-pub extern "C" fn retro_get_memory_size(_id: c_uint) -> size_t {
-    0
 }
 
 pub mod dummy {

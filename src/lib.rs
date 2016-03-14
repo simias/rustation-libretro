@@ -5,377 +5,208 @@ mod retrogl;
 mod retrolog;
 mod renderer;
 
-use std::path::{Path, PathBuf};
-use std::fs::File;
-use std::io::Read;
 use std::str::FromStr;
+use std::ptr;
 
-use libc::{c_char, c_uint};
+use libc::{c_char, c_uint, int16_t, uint16_t, uint32_t};
 
-use rustation::cdrom::disc::{Disc, Region};
-use rustation::bios::{Bios, BIOS_SIZE};
-use rustation::gpu::{Gpu, VideoClock};
-use rustation::memory::Interconnect;
-use rustation::cpu::Cpu;
-use rustation::padmemcard::gamepad::{Button, ButtonState};
-use rustation::shared::SharedState;
-use rustation::debugger::Debugger;
-
-use cdimage::cue::Cue;
+use retrogl::RetroGl;
+use renderer::CommandVertex;
 
 #[macro_use]
 extern crate log;
 extern crate libc;
 extern crate gl;
-extern crate rustation;
 extern crate arrayvec;
-extern crate cdimage;
 
-/// Static system information sent to the frontend on request
-const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
-    library_name: cstring!("Rustation"),
-    library_version: rustation::VERSION_CSTR as *const _ as *const c_char,
-    valid_extensions: cstring!("cue"),
-    need_fullpath: false,
-    block_extract: false,
-};
+static mut static_renderer: *mut retrogl::RetroGl = 0 as *mut _;
 
-/// Emulator context
-struct Context {
-    retrogl: retrogl::RetroGl,
-    cpu: Cpu,
-    shared_state: SharedState,
-    debugger: Debugger,
-    disc_path: PathBuf,
-    video_clock: VideoClock,
-    /// Number of frames output by the emulator (i.e. number of times
-    /// `render_frame` has been called)
-    frame_count: u32,
-    /// When true the internal FPS monitoring in enabled
-    monitor_internal_fps: bool,
-    /// Number of frames we guessed the game rendered internally when
-    /// `monitor_internal_fps` is true. This counter is reset every
-    /// `INTERNAL_FPS_SAMPLE_PERIOD`.
-    internal_frame_count: u32,
-    /// Internal display coordinates in VRAM at the end of the
-    /// previous frame. Used for internal FPS calculations.
-    prev_display_start: (u16, u16),
+fn drop_renderer() {
+    unsafe {
+        if !static_renderer.is_null() {
+            let _ = Box::from_raw(static_renderer);
+            static_renderer = ptr::null_mut();
+        }
+    }
 }
 
-impl Context {
-    fn new(disc: &Path) -> Result<Context, ()> {
+fn set_renderer(renderer: RetroGl) {
+    let r = Box::new(renderer);
 
-        let (cpu, video_clock) = try!(Context::load_disc(disc));
-        let shared_state = SharedState::new();
-        let retrogl = try!(retrogl::RetroGl::new(video_clock));
+    drop_renderer();
 
-        Ok(Context {
-            retrogl: retrogl,
-            cpu: cpu,
-            shared_state: shared_state,
-            debugger: Debugger::new(),
-            disc_path: disc.to_path_buf(),
-            video_clock: video_clock,
-            frame_count: 0,
-            monitor_internal_fps: CoreVariables::display_internal_fps(),
-            internal_frame_count: 0,
-            prev_display_start: (0, 0),
-        })
+    unsafe {
+        static_renderer = Box::into_raw(r);
     }
+}
 
-    fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
-        let image =
-            match Cue::new(disc) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Couldn't load {}: {}", disc.to_string_lossy(), e);
-                    return Err(());
-                }
-            };
-
-        let disc =
-            match Disc::new(Box::new(image)) {
-                Ok(d) => d,
-                Err(e) => {
-                    error!("Couldn't load {}: {}", disc.to_string_lossy(), e);
-                    return Err(());
-                }
-            };
-
-        let region = disc.region();
-
-        info!("Detected disc region: {:?}", region);
-
-        let bios =
-            match Context::find_bios(region) {
-                Some(b) => b,
-                None => {
-                    error!("Couldn't find a BIOS, bailing out");
-                    return Err(());
-                }
-            };
-
-        let video_clock =
-            match region {
-                Region::Europe => VideoClock::Pal,
-                Region::NorthAmerica => VideoClock::Ntsc,
-                Region::Japan => VideoClock::Ntsc,
-            };
-
-        // If we're asked to boot straight to the BIOS menu we pretend
-        // no disc is present.
-        let disc =
-            if CoreVariables::bios_menu() {
-                None
-            } else {
-                Some(disc)
-            };
-
-        let gpu = Gpu::new(video_clock);
-        let inter = Interconnect::new(bios, gpu, disc);
-
-        Ok((Cpu::new(inter), video_clock))
-    }
-
-    /// Attempt to find a BIOS for `region` in the system directory
-    fn find_bios(region: Region) -> Option<Bios> {
-        let system_directory =
-            match libretro::get_system_directory() {
-                Some(dir) => dir,
-                // libretro.h says that when the system directory is not
-                // provided "it's up to the implementation to find a
-                // suitable directory" but I'm not sure what to put
-                // here. Maybe "."? I'd rather give an explicit error
-                // message instead.
-                None => {
-                    error!("The frontend didn't give us a system directory, \
-                            no BIOS can be loaded");
-                    return None;
-                }
-            };
-
-        info!("Looking for a BIOS for region {:?} in {:?}",
-              region,
-              system_directory);
-
-        let dir =
-            match ::std::fs::read_dir(&system_directory) {
-                Ok(d) => d,
-                Err(e) => {
-                    error!("Can't read directory {:?}: {}",
-                           system_directory, e);
-                    return None;
-                }
-            };
-
-        for entry in dir {
-            match entry {
-                Ok(entry) => {
-                    let path = entry.path();
-
-                    match entry.metadata() {
-                        Ok(md) => {
-                            if !md.is_file() {
-                                debug!("Ignoring {:?}: not a file", path);
-                            } else if md.len() != BIOS_SIZE as u64 {
-                                debug!("Ignoring {:?}: bad size", path);
-                            } else {
-                                let bios = Context::try_bios(region, &path);
-
-                                if bios.is_some() {
-                                    // Found a valid BIOS!
-                                    return bios;
-                                }
-                            }
-                        }
-                        Err(e) =>
-                            warn!("Ignoring {:?}: can't get file metadata: {}",
-                                  path, e)
-                    }
-                }
-                Err(e) => warn!("Error while reading directory: {}", e),
-            }
+fn renderer() -> &'static mut RetroGl {
+    unsafe {
+        if static_renderer.is_null() {
+            panic!("Attempted to use a NULL renderer");
         }
 
+        &mut *static_renderer
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_init() {
+    static mut first_init: bool = true;
+
+    unsafe {
+        if first_init {
+            retrolog::init();
+            first_init = false;
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_open(is_pal: bool) -> bool {
+    let clock = match is_pal {
+        true => VideoClock::Pal,
+        false => VideoClock::Ntsc,
+    };
+
+    match RetroGl::new(clock) {
+        Ok(r) => {
+            set_renderer(r);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_close() {
+    drop_renderer();
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_refresh_variables() {
+    renderer().refresh_variables();
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_prepare_frame() {
+    renderer().prepare_render();
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_finalize_frame() {
+    renderer().finalize_frame();
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_set_environment(callback: libretro::EnvironmentFn) {
+    libretro::set_environment(callback);
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_set_video_refresh(callback: libretro::VideoRefreshFn) {
+    libretro::set_video_refresh(callback);
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_get_system_av_info(info: *mut libretro::SystemAvInfo) {
+    let info = ptr_as_mut_ref(info).unwrap();
+
+    *info = renderer().get_system_av_info();
+}
+
+//
+// Draw commands
+//
+
+#[no_mangle]
+pub extern "C" fn rsx_set_draw_offset(x: int16_t, y: int16_t) {
+    renderer().gl_renderer().set_draw_offset(x as i16, y as i16);
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_set_draw_area(x: uint16_t,
+                                    y: uint16_t,
+                                    w: uint16_t,
+                                    h: uint16_t) {
+    renderer().gl_renderer().set_draw_area((x as u16, y as u16),
+                                           (w as u16, h as u16));
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_set_display_mode(x: uint16_t,
+                                       y: uint16_t,
+                                       w: uint16_t,
+                                       h: uint16_t,
+                                       depth_24bpp: bool) {
+    renderer().gl_renderer().set_display_mode((x as u16, y as u16),
+                                              (w as u16, h as u16),
+                                              depth_24bpp);
+}
+
+#[no_mangle]
+pub extern "C" fn rsx_push_triangle(p0x: int16_t,
+                                    p0y: int16_t,
+                                    p1x: int16_t,
+                                    p1y: int16_t,
+                                    p2x: int16_t,
+                                    p2y: int16_t,
+                                    c0: uint32_t,
+                                    c1: uint32_t,
+                                    c2: uint32_t,
+                                    dither: bool) {
+
+    let v = [
+        CommandVertex {
+            position: [p0x as i16, p0y as i16],
+            color: [c0 as u8, (c0 >> 8) as u8, (c0 >> 16) as u8],
+            texture_coord: [0; 2],
+            texture_page: [0; 2],
+            clut: [0; 2],
+            texture_blend_mode: 0,
+            depth_shift: 0,
+            dither: dither as u8,
+        },
+        CommandVertex {
+            position: [p1x as i16, p1y as i16],
+            color: [c1 as u8, (c1 >> 8) as u8, (c1 >> 16) as u8],
+            texture_coord: [0; 2],
+            texture_page: [0; 2],
+            clut: [0; 2],
+            texture_blend_mode: 0,
+            depth_shift: 0,
+            dither: dither as u8,
+        },
+        CommandVertex {
+            position: [p2x as i16, p2y as i16],
+            color: [c2 as u8, (c2 >> 8) as u8, (c2 >> 16) as u8],
+            texture_coord: [0; 2],
+            texture_page: [0; 2],
+            clut: [0; 2],
+            texture_blend_mode: 0,
+            depth_shift: 0,
+            dither: dither as u8,
+        }];
+
+    renderer().gl_renderer().push_triangle(&v);
+}
+
+/// Cast a mutable pointer into a mutable reference, return None if
+/// it's NULL.
+fn ptr_as_mut_ref<'a, T>(v: *mut T) -> Option<&'a mut T> {
+
+    if v.is_null() {
         None
+    } else {
+        Some(unsafe { &mut *v })
     }
-
-    /// Attempt to read and load the BIOS at `path`
-    fn try_bios(region: Region, path: &Path) -> Option<Bios> {
-
-        let mut file =
-            match File::open(&path) {
-                Ok(f) => f,
-                Err(e) => {
-                    warn!("Can't open {:?}: {}", path, e);
-                    return None;
-                }
-            };
-
-        // Load the BIOS
-        let mut data = Box::new([0; BIOS_SIZE]);
-        let mut nread = 0;
-
-        while nread < BIOS_SIZE {
-            nread +=
-                match file.read(&mut data[nread..]) {
-                    Ok(0) => {
-                        warn!("Short read while loading {:?}", path);
-                        return None;
-                    }
-                    Ok(n) => n,
-                    Err(e) => {
-                        warn!("Error while reading {:?}: {}", path, e);
-                        return None;
-                    }
-                };
-        }
-
-        match Bios::new(data) {
-            Some(bios) => {
-                let md = bios.metadata();
-
-                if md.known_bad {
-                    warn!("Ignoring {:?}: known bad dump", path);
-                    None
-                } else if md.region != region {
-                    info!("Ignoring {:?}: bad region ({:?})", path, md.region);
-                    None
-                } else {
-                    info!("Using BIOS {:?} ({:?}, version {}.{})",
-                          path,
-                          md.region,
-                          md.version_major,
-                          md.version_minor);
-                    Some(bios)
-                }
-            }
-            None => {
-                debug!("Ignoring {:?}: not a known PlayStation BIOS", path);
-                None
-            }
-        }
-    }
-
-    fn poll_controllers(&mut self) {
-        // XXX we only support pad 0 for now
-        let pad = &mut *self.cpu.interconnect_mut()
-            .pad_memcard_mut()
-            .pad_profiles()[0];
-
-        for &(retrobutton, psxbutton) in &BUTTON_MAP {
-            let state =
-                if libretro::button_pressed(0, retrobutton) {
-                    ButtonState::Pressed
-                } else {
-                    ButtonState::Released
-                };
-
-            pad.set_button_state(psxbutton, state);
-        }
-    }
-}
-
-impl libretro::Context for Context {
-
-    fn render_frame(&mut self) {
-
-        self.frame_count += 1;
-
-        self.poll_controllers();
-
-        let cpu = &mut self.cpu;
-        let shared_state = &mut self.shared_state;
-        let debugger = &mut self.debugger;
-
-        if libretro::key_pressed(0, libretro::Key::Pause) {
-            // Trigger the debugger
-            debugger.trigger_break();
-        }
-
-        self.retrogl.render_frame(|renderer| {
-            cpu.run_until_next_frame(debugger, shared_state, renderer);
-        });
-
-        if self.monitor_internal_fps {
-            // In order to compute the internal game framerate we
-            // monitor whether the display coordinates have
-            // changed. Since most games use double buffering that
-            // should effectively give us the internal framerate.
-            let display_start = cpu.interconnect().gpu().display_vram_start();
-
-            if display_start != self.prev_display_start {
-                self.prev_display_start = display_start;
-                self.internal_frame_count += 1;
-            }
-
-            if self.frame_count % INTERNAL_FPS_SAMPLE_PERIOD == 0 {
-                // We compute the internal FPS relative to the
-                // full-speed video output FPS.
-                let video_fps = video_output_framerate(self.video_clock);
-
-                let internal_fps =
-                    (self.internal_frame_count as f32 * video_fps)
-                    / INTERNAL_FPS_SAMPLE_PERIOD as f32;
-
-                libretro_message!(100, "Internal FPS: {:.2}", internal_fps);
-
-                self.internal_frame_count = 0;
-            }
-        }
-    }
-
-    fn get_system_av_info(&self) -> libretro::SystemAvInfo {
-        let upscaling = CoreVariables::internal_upscale_factor();
-
-        get_av_info(self.video_clock, upscaling)
-    }
-
-    fn refresh_variables(&mut self) {
-        self.monitor_internal_fps = CoreVariables::display_internal_fps();
-
-        self.retrogl.refresh_variables();
-    }
-
-    fn reset(&mut self) {
-        match Context::load_disc(&self.disc_path) {
-            Ok((cpu, video_clock)) => {
-                info!("Game reset");
-                self.cpu = cpu;
-                self.video_clock = video_clock;
-                self.shared_state = SharedState::new();
-            },
-            Err(_) => warn!("Couldn't reset game"),
-        }
-    }
-
-    fn gl_context_reset(&mut self) {
-        self.retrogl.context_reset();
-    }
-
-    fn gl_context_destroy(&mut self) {
-        self.retrogl.context_destroy();
-    }
-}
-
-/// Init function, guaranteed called only once (unlike `retro_init`)
-fn init() {
-    retrolog::init();
-}
-
-/// Called when a game is loaded and a new context must be built
-fn load_game(disc: PathBuf) -> Option<Box<libretro::Context>> {
-    info!("Loading {:?}", disc);
-
-    Context::new(&disc).ok()
-        .map(|c| Box::new(c) as Box<libretro::Context>)
 }
 
 libretro_variables!(
-    struct CoreVariables (prefix = "rustation") {
-        internal_upscale_factor: u32, parse_upscale
+    struct CoreVariables (prefix = "beetle_psx") {
+        internal_resolution: u32, parse_upscale
             => "Internal upscaling factor; \
-                1x (native)|2x|3x|4x|5x|6x|7x|8x|9x|10x",
+                1x (native)|2x|3x|4x|5x|6x|7x|8x|9x|10x|11x|12x",
         internal_color_depth: u8, parse_color_depth
             => "Internal color depth; dithered 16bpp (native)|32bpp",
         scale_dither: bool, parse_bool
@@ -407,10 +238,6 @@ fn parse_bool(opt: &str) -> Result<bool, ()> {
         "false" | "disabled" | "off" => Ok(false),
         _ => Err(()),
     }
-}
-
-fn init_variables() {
-    CoreVariables::register();
 }
 
 // Precise FPS values for the video output for the given
@@ -454,24 +281,15 @@ fn get_av_info(std: VideoClock, upscaling: u32) -> libretro::SystemAvInfo {
     }
 }
 
-/// Libretro to PlayStation button mapping. Libretro's mapping is
-/// based on the SNES controller so libretro's A button matches the
-/// PlayStation's Circle button.
-const BUTTON_MAP: [(libretro::JoyPadButton, Button); 14] =
-    [(libretro::JoyPadButton::Up, Button::DUp),
-     (libretro::JoyPadButton::Down, Button::DDown),
-     (libretro::JoyPadButton::Left, Button::DLeft),
-     (libretro::JoyPadButton::Right, Button::DRight),
-     (libretro::JoyPadButton::Start, Button::Start),
-     (libretro::JoyPadButton::Select, Button::Select),
-     (libretro::JoyPadButton::A, Button::Circle),
-     (libretro::JoyPadButton::B, Button::Cross),
-     (libretro::JoyPadButton::Y, Button::Square),
-     (libretro::JoyPadButton::X, Button::Triangle),
-     (libretro::JoyPadButton::L, Button::L1),
-     (libretro::JoyPadButton::R, Button::R1),
-     (libretro::JoyPadButton::L2, Button::L2),
-     (libretro::JoyPadButton::R2, Button::R2)];
+// Width of the VRAM in 16bit pixels
+pub const VRAM_WIDTH_PIXELS: u16 = 1024;
+// Height of the VRAM in lines
+pub const VRAM_HEIGHT: u16 = 512;
 
-/// Number of output frames over which the internal FPS is averaged
-const INTERNAL_FPS_SAMPLE_PERIOD: u32 = 32;
+/// The are a few hardware differences between PAL and NTSC consoles,
+/// in particular the pixelclock runs slightly slower on PAL consoles.
+#[derive(Clone,Copy)]
+pub enum VideoClock {
+    Ntsc,
+    Pal,
+}

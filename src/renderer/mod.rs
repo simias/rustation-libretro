@@ -1,12 +1,9 @@
-use std::default::Default;
-
 use gl;
 use gl::types::{GLuint, GLint, GLsizei, GLenum, GLfloat};
-use arrayvec::ArrayVec;
 use libc::c_uint;
-use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
-use rustation::gpu::renderer::{TextureDepth, BlendMode};
-use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
+
+use VRAM_WIDTH_PIXELS;
+use VRAM_HEIGHT;
 
 use retrogl::DrawConfig;
 use retrogl::error::{Error, get_error};
@@ -49,7 +46,7 @@ pub struct GlRenderer {
 
 impl GlRenderer {
     pub fn from_config(config: DrawConfig) -> Result<GlRenderer, Error> {
-        let upscaling = CoreVariables::internal_upscale_factor();
+        let upscaling = CoreVariables::internal_resolution();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
         let wireframe = CoreVariables::wireframe();
@@ -314,7 +311,7 @@ impl GlRenderer {
     }
 
     pub fn refresh_variables(&mut self) -> bool {
-        let upscaling = CoreVariables::internal_upscale_factor();
+        let upscaling = CoreVariables::internal_resolution();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
         let wireframe = CoreVariables::wireframe();
@@ -456,16 +453,16 @@ impl GlRenderer {
         libretro::gl_frame_done(self.frontend_resolution.0,
                                 self.frontend_resolution.1)
     }
-}
 
-impl Renderer for GlRenderer {
-    fn set_draw_offset(&mut self, x: i16, y: i16) {
+    pub fn set_draw_offset(&mut self, x: i16, y: i16) {
         // Finish drawing anything with the current offset
         self.draw().unwrap();
         self.config.draw_offset = (x, y)
     }
 
-    fn set_draw_area(&mut self, top_left: (u16, u16), dimensions: (u16, u16)) {
+    pub fn set_draw_area(&mut self,
+                         top_left: (u16, u16),
+                         dimensions: (u16, u16)) {
         // Finish drawing anything in the current area
         self.draw().unwrap();
 
@@ -475,38 +472,17 @@ impl Renderer for GlRenderer {
         self.apply_scissor();
     }
 
-    fn set_display_mode(&mut self,
-                        top_left: (u16, u16),
-                        resolution: (u16, u16),
-                        depth_24bpp: bool) {
+    pub fn set_display_mode(&mut self,
+                            top_left: (u16, u16),
+                            resolution: (u16, u16),
+                            depth_24bpp: bool) {
         self.config.display_top_left = top_left;
         self.config.display_resolution = resolution;
         self.config.display_24bpp = depth_24bpp;
     }
 
-    fn push_line(&mut self,
-                 attributes: &PrimitiveAttributes,
-                 vertices: &[Vertex; 2]) {
-
-        let force_draw =
-            self.command_buffer.remaining_capacity() < 2 ||
-            self.command_draw_mode != gl::LINES;
-
-        if force_draw {
-            self.draw().unwrap();
-            self.command_draw_mode = gl::LINES;
-        }
-
-        let v: ArrayVec<[_; 2]> =
-            vertices.iter().map(|v| CommandVertex::from_vertex(attributes, v))
-            .collect();
-
-        self.command_buffer.push_slice(&v).unwrap();
-    }
-
-    fn push_triangle(&mut self,
-                     attributes: &PrimitiveAttributes,
-                     vertices: &[Vertex; 3]) {
+    pub fn push_triangle(&mut self,
+                         vertices: &[CommandVertex; 3]) {
 
         let force_draw =
             self.command_buffer.remaining_capacity() < 3 ||
@@ -517,171 +493,35 @@ impl Renderer for GlRenderer {
             self.command_draw_mode = gl::TRIANGLES;
         }
 
-        let v: ArrayVec<[_; 3]> =
-            vertices.iter().map(|v| CommandVertex::from_vertex(attributes, v))
-            .collect();
-
-        self.command_buffer.push_slice(&v).unwrap();
-    }
-
-    fn push_quad(&mut self,
-                 attributes: &PrimitiveAttributes,
-                 vertices: &[Vertex; 4]) {
-        let force_draw =
-            self.command_buffer.remaining_capacity() < 6 ||
-            self.command_draw_mode != gl::TRIANGLES;
-
-        if force_draw {
-            self.draw().unwrap();
-            self.command_draw_mode = gl::TRIANGLES;
-        }
-
-        let v: ArrayVec<[_; 4]> =
-            vertices.iter().map(|v| CommandVertex::from_vertex(attributes, v))
-            .collect();
-
-        self.command_buffer.push_slice(&v[0..3]).unwrap();
-        self.command_buffer.push_slice(&v[1..4]).unwrap();
-    }
-
-    fn fill_rect(&mut self,
-                 color: [u8; 3],
-                 top_left: (u16, u16),
-                 dimensions: (u16, u16)) {
-        // Draw pending commands
-        self.draw().unwrap();
-
-        let x_start = top_left.0;
-        let x_end = x_start + dimensions.0;
-        let y_start = top_left.1;
-        let y_end = y_start + dimensions.1;
-
-        // We reuse the normal command processing program since it's
-        // pretty much equivalent to drawing a non-textured polygon
-        let v: ArrayVec<[_; 4]> = [(x_start, y_start),
-                                   (x_end, y_start),
-                                   (x_start, y_end),
-                                   (x_end, y_end)]
-            .iter()
-            .map(|&(x, y)| {
-                CommandVertex {
-                    position: [x as i16, y as i16],
-                    color: color,
-                    // No texture
-                    texture_blend_mode: 0,
-                    ..Default::default()
-                }
-            })
-            .collect();
-
-        self.command_buffer.push_slice(&v).unwrap();
-
-        // We use texture unit 0
-        self.command_buffer.program().uniform1i("fb_texture", 0).unwrap();
-
-        // Bind the out framebuffer
-        let _fb = Framebuffer::new(&self.fb_out);
-
-        // Fill rect commands don't use the draw offset
-        self.command_buffer.program().uniform2i("offset", 0, 0).unwrap();
-
-        unsafe {
-            gl::Disable(gl::SCISSOR_TEST);
-            gl::Disable(gl::BLEND);
-            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-        }
-
-
-        self.command_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
-
-        unsafe {
-            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
-        }
-
-        self.command_buffer.clear().unwrap();
-    }
-
-    fn load_image(&mut self,
-                  top_left: (u16, u16),
-                  resolution: (u16, u16),
-                  pixel_buffer: &[u16]) {
-        self.draw().unwrap();
-
-        let x_start = top_left.0 as usize;
-        let y_start = top_left.1 as usize;
-
-        let w = resolution.0 as usize;
-        let h = resolution.1 as usize;
-
-        // Update the VRAM buffer (this way we won't lose the textures
-        // if the GL context gets destroyed)
-        for y in 0..h {
-            for x in 0..w {
-                let fb_x = x_start + x;
-                let fb_y = y_start + y;
-
-                let fb_w = VRAM_WIDTH_PIXELS as usize;
-
-                let fb_index = fb_y * fb_w + fb_x;
-                let buffer_index = y * w + x;
-
-                self.config.vram[fb_index] = pixel_buffer[buffer_index];
-            }
-        }
-
-        self.upload_textures(top_left, resolution, pixel_buffer).unwrap();
+        self.command_buffer.push_slice(vertices).unwrap();
     }
 }
 
-#[derive(Default, Debug)]
-struct CommandVertex {
+#[derive(Default)]
+pub struct CommandVertex {
     /// Position in PlayStation VRAM coordinates
-    position: [i16; 2],
+    pub position: [i16; 2],
     /// RGB color, 8bits per component
-    color: [u8; 3],
+    pub color: [u8; 3],
     /// Texture coordinates within the page
-    texture_coord: [u16; 2],
+    pub texture_coord: [u16; 2],
     /// Texture page (base offset in VRAM used for texture lookup)
-    texture_page: [u16; 2],
+    pub texture_page: [u16; 2],
     /// Color Look-Up Table (palette) coordinates in VRAM
-    clut: [u16; 2],
+    pub clut: [u16; 2],
     /// Blending mode: 0: no texture, 1: raw-texture, 2: texture-blended
-    texture_blend_mode: u8,
+    pub texture_blend_mode: u8,
     /// Right shift from 16bits: 0 for 16bpp textures, 1 for 8bpp, 2
     /// for 4bpp
-    depth_shift: u8,
+    pub depth_shift: u8,
     /// True if dithering is enabled for this primitive
-    dither: u8,
+    pub dither: u8,
 }
 
 implement_vertex!(CommandVertex,
                   position, color, texture_page,
                   texture_coord, clut, texture_blend_mode,
                   depth_shift, dither);
-
-impl CommandVertex {
-    fn from_vertex(attributes: &PrimitiveAttributes,
-                   v: &Vertex) -> CommandVertex {
-        CommandVertex {
-            position: v.position,
-            color: v.color,
-            texture_coord: v.texture_coord,
-            texture_page: attributes.texture_page,
-            clut: attributes.clut,
-            texture_blend_mode: match attributes.blend_mode {
-                BlendMode::None => 0,
-                BlendMode::Raw => 1,
-                BlendMode::Blended => 2,
-            },
-            depth_shift: match attributes.texture_depth {
-                TextureDepth::T4Bpp => 2,
-                TextureDepth::T8Bpp => 1,
-                TextureDepth::T16Bpp => 0,
-            },
-            dither: attributes.dither as u8,
-        }
-    }
-}
 
 struct OutputVertex {
     /// Vertex position on the screen

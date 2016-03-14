@@ -2,9 +2,9 @@
 
 use libretro;
 use gl;
-use rustation::gpu::VideoClock;
-use rustation::gpu::renderer::Renderer;
-use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
+use VideoClock;
+use VRAM_WIDTH_PIXELS;
+use VRAM_HEIGHT;
 use CoreVariables;
 
 use renderer::GlRenderer;
@@ -76,6 +76,14 @@ impl RetroGl {
         }
     }
 
+    pub fn gl_renderer(&mut self) -> &mut GlRenderer {
+        match self.state {
+            GlState::Valid(ref mut r) => r,
+            GlState::Invalid(_) =>
+                panic!("Attempted to get GL state without GL context"),
+        }
+    }
+
     pub fn context_destroy(&mut self) {
         info!("OpenGL context destroy");
 
@@ -89,9 +97,7 @@ impl RetroGl {
         self.state = GlState::Invalid(config);
     }
 
-    pub fn render_frame<F>(&mut self, emulate: F)
-        where F: FnOnce(&mut Renderer) {
-
+    pub fn prepare_render(&mut self) {
         let renderer =
             match self.state {
                 GlState::Valid(ref mut r) => r,
@@ -100,8 +106,15 @@ impl RetroGl {
             };
 
         renderer.prepare_render();
+    }
 
-        emulate(renderer);
+    pub fn finalize_frame(&mut self) {
+        let renderer =
+            match self.state {
+                GlState::Valid(ref mut r) => r,
+                GlState::Invalid(_) =>
+                    panic!("Attempted to render a frame without GL context"),
+            };
 
         renderer.finalize_frame();
     }
@@ -120,7 +133,7 @@ impl RetroGl {
             // The resolution has changed, we must tell the frontend
             // to change its format
 
-            let upscaling = CoreVariables::internal_upscale_factor();
+            let upscaling = CoreVariables::internal_resolution();
 
             let av_info = ::get_av_info(self.video_clock,
                                         upscaling);
@@ -141,6 +154,12 @@ impl RetroGl {
                 warn!("Try resetting to enable the new configuration");
             }
         }
+    }
+
+    pub fn get_system_av_info(&self) -> libretro::SystemAvInfo {
+        let upscaling = CoreVariables::internal_resolution();
+
+        ::get_av_info(self.video_clock, upscaling)
     }
 }
 
