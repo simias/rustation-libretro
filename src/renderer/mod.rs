@@ -431,6 +431,8 @@ impl GlRenderer {
             .uniform1i("fb", 1).unwrap();
         self.output_buffer.program()
             .uniform1i("depth_24bpp", depth_24bpp).unwrap();
+        self.output_buffer.program()
+            .uniform1ui("internal_upscaling", self.internal_upscaling).unwrap();
 
         self.output_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
 
@@ -629,7 +631,7 @@ impl Renderer for GlRenderer {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct CommandVertex {
     /// Position in PlayStation VRAM coordinates
     position: [i16; 2],

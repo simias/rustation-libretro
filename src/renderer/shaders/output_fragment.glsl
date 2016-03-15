@@ -4,6 +4,9 @@
 uniform sampler2D fb;
 // Framebuffer sampling: 0: Normal 16bpp mode, 1: Use 24bpp mode
 uniform int depth_24bpp;
+// Internal resolution upscaling factor. Necessary for proper 24bpp
+// display since we need to know how the pixels are laid out in RAM.
+uniform uint internal_upscaling;
 
 in vec2 frag_fb_coord;
 
@@ -30,24 +33,30 @@ void main() {
   } else {
     // In this mode we have to interpret the framebuffer as containing
     // 24bit RGB values instead of the usual 16bits 1555.
-
     ivec2 fb_size = textureSize(fb, 0);
 
     int x_24 = int(frag_fb_coord.x * float(fb_size.x));
-    int y = int((frag_fb_coord.y * float(fb_size.y)));
+    int y = int(frag_fb_coord.y * float(fb_size.y));
+
+    int x_native = x_24 / int(internal_upscaling);
+
+    x_24 = x_native * int(internal_upscaling);
 
     // The 24bit color is stored over two 16bit pixels, convert the
     // coordinates
-    int x_16 = (x_24 * 3) / 2;
+    int x0_16 = (x_24 * 3) / 2;
 
-    int col0 = rebuild_color(texelFetch(fb, ivec2(x_16, y), 0));
-    int col1 = rebuild_color(texelFetch(fb, ivec2(x_16 + 1, y), 0));
+    // Move on to the next pixel at native resolution
+    int x1_16 = x0_16 + int(internal_upscaling);
+
+    int col0 = rebuild_color(texelFetch(fb, ivec2(x0_16, y), 0));
+    int col1 = rebuild_color(texelFetch(fb, ivec2(x1_16, y), 0));
 
     int col = (col1 << 16) | col0;
 
     // If we're drawing an odd 24 bit pixel we're starting in the
     // middle of a 16bit cell so we need to adjust accordingly.
-    col >>= 8 * (x_24 & 1);
+    col >>= 8 * (x_native & 1);
 
     // Finally we can extract and normalize the 24bit pixel
     float b = float((col >> 16) & 0xff) / 255.;
