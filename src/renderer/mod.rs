@@ -543,7 +543,7 @@ impl GlRenderer {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CommandVertex {
     /// Position in PlayStation VRAM coordinates
     pub position: [i16; 2],

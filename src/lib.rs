@@ -8,7 +8,7 @@ mod renderer;
 use std::str::FromStr;
 use std::ptr;
 
-use libc::{c_char, c_uint, int16_t, uint16_t, uint32_t};
+use libc::{c_char, c_uint, uint8_t, int16_t, uint16_t, uint32_t};
 
 use retrogl::RetroGl;
 use renderer::CommandVertex;
@@ -164,37 +164,54 @@ pub extern "C" fn rsx_push_triangle(p0x: int16_t,
                                     c0: uint32_t,
                                     c1: uint32_t,
                                     c2: uint32_t,
+                                    t0x: uint16_t,
+                                    t0y: uint16_t,
+                                    t1x: uint16_t,
+                                    t1y: uint16_t,
+                                    t2x: uint16_t,
+                                    t2y: uint16_t,
+                                    texpage_x: uint16_t,
+                                    texpage_y: uint16_t,
+                                    clut_x: uint16_t,
+                                    clut_y: uint16_t,
+                                    texture_blend_mode: uint8_t,
+                                    depth_shift: uint8_t,
                                     dither: bool) {
+
+    let texture_page = [texpage_x as u16, texpage_y as u16];
+    let clut = [clut_x as u16, clut_y as u16];
+    let depth_shift = depth_shift as u8;
+    let texture_blend_mode = texture_blend_mode as u8;
 
     let v = [
         CommandVertex {
             position: [p0x as i16, p0y as i16],
             color: [c0 as u8, (c0 >> 8) as u8, (c0 >> 16) as u8],
-            texture_coord: [0; 2],
-            texture_page: [0; 2],
-            clut: [0; 2],
-            texture_blend_mode: 0,
-            depth_shift: 0,
+            texture_coord: [t0x as u16, t0y as u16],
+            texture_page: texture_page,
+            clut: clut,
+            texture_blend_mode: texture_blend_mode,
+            depth_shift: depth_shift,
             dither: dither as u8,
         },
         CommandVertex {
             position: [p1x as i16, p1y as i16],
             color: [c1 as u8, (c1 >> 8) as u8, (c1 >> 16) as u8],
-            texture_coord: [0; 2],
-            texture_page: [0; 2],
-            clut: [0; 2],
-            texture_blend_mode: 0,
-            depth_shift: 0,
+            texture_coord: [t1x as u16, t1y as u16],
+            texture_page: texture_page,
+            clut: clut,
+            texture_blend_mode: texture_blend_mode,
+            depth_shift: depth_shift,
             dither: dither as u8,
         },
         CommandVertex {
             position: [p2x as i16, p2y as i16],
             color: [c2 as u8, (c2 >> 8) as u8, (c2 >> 16) as u8],
-            texture_coord: [0; 2],
-            texture_page: [0; 2],
-            clut: [0; 2],
-            texture_blend_mode: 0,
-            depth_shift: 0,
+            texture_coord: [t2x as u16, t2y as u16],
+            texture_page: texture_page,
+            clut: clut,
+            texture_blend_mode: texture_blend_mode,
+            depth_shift: depth_shift,
             dither: dither as u8,
         }];
 
