@@ -191,6 +191,19 @@ pub extern "C" fn rsx_push_triangle(p0x: int16_t,
     renderer().gl_renderer().push_triangle(&v);
 }
 
+#[no_mangle]
+pub extern "C" fn rsx_load_image(x: uint16_t, y: uint16_t,
+                                 w: uint16_t, h: uint16_t,
+                                 vram: *const uint16_t) {
+    let vram = unsafe {
+        ::std::slice::from_raw_parts(vram as *const u16, 1024 * 512)
+    };
+
+    renderer().gl_renderer().upload_vram_window((x as u16, y as u16),
+                                                (w as u16, h as u16),
+                                                vram).unwrap();
+}
+
 /// Cast a mutable pointer into a mutable reference, return None if
 /// it's NULL.
 fn ptr_as_mut_ref<'a, T>(v: *mut T) -> Option<&'a mut T> {

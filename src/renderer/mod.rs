@@ -291,6 +291,52 @@ impl GlRenderer {
         get_error()
     }
 
+    pub fn upload_vram_window(&mut self,
+                              top_left: (u16, u16),
+                              dimensions: (u16, u16),
+                              pixel_buffer: &[u16]) -> Result<(), Error> {
+
+        try!(self.fb_texture.set_sub_image_window(top_left,
+                                                  dimensions,
+                                                  VRAM_WIDTH_PIXELS as usize,
+                                                  gl::RGBA,
+                                                  gl::UNSIGNED_SHORT_1_5_5_5_REV,
+                                                  pixel_buffer));
+
+        try!(self.image_load_buffer.clear());
+
+        let x_start = top_left.0;
+        let x_end = x_start + dimensions.0;
+        let y_start = top_left.1;
+        let y_end = y_start + dimensions.1;
+
+        try!(self.image_load_buffer.push_slice(
+            &[ImageLoadVertex { position: [x_start, y_start] },
+              ImageLoadVertex { position: [x_end, y_start] },
+              ImageLoadVertex { position: [x_start, y_end] },
+              ImageLoadVertex { position: [x_end, y_end] },
+              ]));
+
+        try!(self.image_load_buffer.program().uniform1i("fb_texture", 0));
+
+        unsafe {
+            gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+        }
+
+        // Bind the output framebuffer
+        let _fb = Framebuffer::new(&self.fb_out);
+
+        try!(self.image_load_buffer.draw(gl::TRIANGLE_STRIP));
+
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+        }
+
+        get_error()
+    }
+
     pub fn draw_config(&self) -> &DrawConfig {
         &self.config
     }

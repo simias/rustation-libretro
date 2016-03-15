@@ -33,6 +33,10 @@ extern "C" {
 			 int32_t c2,
 			 bool dither);
 
+  void rsx_load_image(uint16_t x, uint16_t y,
+		      uint16_t w, uint16_t h,
+		      uint16_t *vram);
+
 #ifdef __cplusplus
 }
 #endif
