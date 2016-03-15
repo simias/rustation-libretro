@@ -40,13 +40,21 @@ fn set_renderer(renderer: RetroGl) {
     }
 }
 
-fn renderer() -> &'static mut RetroGl {
+fn maybe_renderer() -> Option<&'static mut RetroGl> {
     unsafe {
         if static_renderer.is_null() {
-            panic!("Attempted to use a NULL renderer");
+            None
+        } else {
+            Some(&mut *static_renderer)
         }
+    }
 
-        &mut *static_renderer
+}
+
+fn renderer() -> &'static mut RetroGl {
+    match maybe_renderer() {
+        Some(r) => r,
+        None => panic!("Attempted to use a NULL renderer"),
     }
 }
 
@@ -85,7 +93,9 @@ pub extern "C" fn rsx_close() {
 
 #[no_mangle]
 pub extern "C" fn rsx_refresh_variables() {
-    renderer().refresh_variables();
+    if let Some(renderer) = maybe_renderer() {
+        renderer.refresh_variables();
+    }
 }
 
 #[no_mangle]
