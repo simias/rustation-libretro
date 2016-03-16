@@ -460,6 +460,8 @@ impl GlRenderer {
 
 impl Renderer for GlRenderer {
     fn set_draw_offset(&mut self, x: i16, y: i16) {
+        // Finish drawing anything with the current offset
+        self.draw().unwrap();
         self.config.draw_offset = (x, y)
     }
 
