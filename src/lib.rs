@@ -219,6 +219,41 @@ pub extern "C" fn rsx_push_triangle(p0x: int16_t,
 }
 
 #[no_mangle]
+pub extern "C" fn rsx_push_line(p0x: int16_t,
+                                p0y: int16_t,
+                                p1x: int16_t,
+                                p1y: int16_t,
+                                c0: uint32_t,
+                                c1: uint32_t,
+                                dither: bool) {
+
+    let v = [
+        CommandVertex {
+            position: [p0x as i16, p0y as i16],
+            color: [c0 as u8, (c0 >> 8) as u8, (c0 >> 16) as u8],
+            texture_coord: [0, 0],
+            texture_page: [0, 0],
+            clut: [0, 0],
+            texture_blend_mode: 0,
+            depth_shift: 0,
+            dither: dither as u8,
+        },
+        CommandVertex {
+            position: [p1x as i16, p1y as i16],
+            color: [c1 as u8, (c1 >> 8) as u8, (c1 >> 16) as u8],
+            texture_coord: [0, 0],
+            texture_page: [0, 0],
+            clut: [0, 0],
+            texture_blend_mode: 0,
+            depth_shift: 0,
+            dither: dither as u8,
+        }];
+
+    renderer().gl_renderer().push_line(&v);
+}
+
+
+#[no_mangle]
 pub extern "C" fn rsx_load_image(x: uint16_t, y: uint16_t,
                                  w: uint16_t, h: uint16_t,
                                  vram: *const uint16_t) {

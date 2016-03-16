@@ -541,6 +541,21 @@ impl GlRenderer {
 
         self.command_buffer.push_slice(vertices).unwrap();
     }
+
+    pub fn push_line(&mut self,
+                     vertices: &[CommandVertex; 2]) {
+
+        let force_draw =
+            self.command_buffer.remaining_capacity() < 2 ||
+            self.command_draw_mode != gl::LINES;
+
+        if force_draw {
+            self.draw().unwrap();
+            self.command_draw_mode = gl::LINES;
+        }
+
+        self.command_buffer.push_slice(vertices).unwrap();
+    }
 }
 
 #[derive(Default, Debug)]
