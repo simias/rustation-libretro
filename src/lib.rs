@@ -219,6 +219,16 @@ pub extern "C" fn rsx_push_triangle(p0x: int16_t,
 }
 
 #[no_mangle]
+pub extern "C" fn rsx_fill_rect(color: uint32_t,
+                                x: uint16_t, y: uint16_t,
+                                w: uint16_t, h: uint16_t) {
+    renderer().gl_renderer()
+        .fill_rect([color as u8, (color >> 8) as u8, (color >> 16) as u8],
+                   (x as u16, y as u16),
+                   (w as u16, h as u16));
+}
+
+#[no_mangle]
 pub extern "C" fn rsx_push_line(p0x: int16_t,
                                 p0y: int16_t,
                                 p1x: int16_t,

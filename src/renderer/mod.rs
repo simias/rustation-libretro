@@ -286,6 +286,7 @@ impl GlRenderer {
 
         unsafe {
             gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+            gl::Enable(gl::SCISSOR_TEST);
         }
 
         get_error()
@@ -332,6 +333,7 @@ impl GlRenderer {
 
         unsafe {
             gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+            gl::Enable(gl::SCISSOR_TEST);
         }
 
         get_error()
@@ -342,15 +344,15 @@ impl GlRenderer {
     }
 
     pub fn prepare_render(&mut self) {
-
-        self.apply_scissor();
-
         // In case we're upscaling we need to increase the line width
         // proportionally
         unsafe {
             gl::LineWidth(self.internal_upscaling as GLfloat);
             gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+            gl::Enable(gl::SCISSOR_TEST);
         }
+
+        self.apply_scissor();
 
         // Bind `fb_texture` to texture unit 0
         self.fb_texture.bind(gl::TEXTURE0);
@@ -494,6 +496,7 @@ impl GlRenderer {
             gl::BindVertexArray(0);
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
             gl::LineWidth(1.);
+            gl::ClearColor(0., 0., 0., 0.);
         }
 
         libretro::gl_frame_done(self.frontend_resolution.0,
@@ -555,6 +558,46 @@ impl GlRenderer {
         }
 
         self.command_buffer.push_slice(vertices).unwrap();
+    }
+
+    pub fn fill_rect(&mut self,
+                     color: [u8; 3],
+                     top_left: (u16, u16),
+                     dimensions: (u16, u16)) {
+        // Draw pending commands
+        self.draw().unwrap();
+
+        // Fill rect ignores the draw area. Save the previous value
+        // and reconfigure the scissor box to the fill rectangle
+        // insteadd.
+        let draw_area_top_left = self.config.draw_area_top_left;
+        let draw_area_dimensions = self.config.draw_area_dimensions;
+
+        self.config.draw_area_top_left = top_left;
+        self.config.draw_area_dimensions = dimensions;
+
+        self.apply_scissor();
+
+        {
+            // Bind the out framebuffer
+            let _fb = Framebuffer::new(&self.fb_out);
+
+            unsafe {
+                gl::ClearColor(color[0] as f32 / 255.,
+                               color[1] as f32 / 255.,
+                               color[2] as f32 / 255.,
+                               // XXX Not entirely sure what happens to
+                               // the mask bit in fill_rect commands
+                               0.);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
+        }
+
+        // Reconfigure the draw area
+        self.config.draw_area_top_left = draw_area_top_left;
+        self.config.draw_area_dimensions = draw_area_dimensions;
+
+        self.apply_scissor();
     }
 }
 

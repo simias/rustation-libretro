@@ -39,6 +39,7 @@ extern "C" {
 			 uint8_t texture_blend_mode,
 			 uint8_t depth_shift,
 			 bool dither);
+
   void rsx_push_line(int16_t p0x, int16_t p0y,
 		     int16_t p1x, int16_t p1y,
 		     uint32_t c0,
@@ -48,6 +49,10 @@ extern "C" {
   void rsx_load_image(uint16_t x, uint16_t y,
 		      uint16_t w, uint16_t h,
 		      uint16_t *vram);
+
+  void rsx_fill_rect(uint32_t color,
+		     uint16_t x, uint16_t y,
+		     uint16_t w, uint16_t h);
 
 #ifdef __cplusplus
 }
