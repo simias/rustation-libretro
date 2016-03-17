@@ -229,6 +229,16 @@ pub extern "C" fn rsx_fill_rect(color: uint32_t,
 }
 
 #[no_mangle]
+pub extern "C" fn rsx_copy_rect(src_x: uint16_t, src_y: uint16_t,
+                                dst_x: uint16_t, dst_y: uint16_t,
+                                w: uint16_t, h: uint16_t) {
+    renderer().gl_renderer()
+        .copy_rect((src_x as u16, src_y as u16),
+                   (dst_x as u16, dst_y as u16),
+                   (w as u16, h as u16));
+}
+
+#[no_mangle]
 pub extern "C" fn rsx_push_line(p0x: int16_t,
                                 p0y: int16_t,
                                 p1x: int16_t,

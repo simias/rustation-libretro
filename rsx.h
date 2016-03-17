@@ -54,6 +54,11 @@ extern "C" {
 		     uint16_t x, uint16_t y,
 		     uint16_t w, uint16_t h);
 
+  void rsx_copy_rect(uint16_t src_x, uint16_t src_y,
+		     uint16_t dst_x, uint16_t dst_y,
+		     uint16_t w, uint16_t h);
+
+
 #ifdef __cplusplus
 }
 #endif

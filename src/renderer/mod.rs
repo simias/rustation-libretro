@@ -1,6 +1,9 @@
+use std::default::Default;
+
 use gl;
 use gl::types::{GLuint, GLint, GLsizei, GLenum, GLfloat};
 use libc::c_uint;
+use arrayvec::ArrayVec;
 
 use VRAM_WIDTH_PIXELS;
 use VRAM_HEIGHT;
@@ -598,6 +601,78 @@ impl GlRenderer {
         self.config.draw_area_dimensions = draw_area_dimensions;
 
         self.apply_scissor();
+    }
+
+    pub fn copy_rect(&mut self,
+                     source_top_left: (u16, u16),
+                     target_top_left: (u16, u16),
+                     dimensions: (u16, u16)) {
+        // Draw pending commands
+        self.draw().unwrap();
+
+        let (x_start, y_start) = target_top_left;
+        let (u_start, v_start) = source_top_left;
+
+        let (w, h) = dimensions;
+
+        // We reuse the normal command processing program to make the
+        // copy by drawing a textured quad
+        let v: ArrayVec<[_; 4]> = [(0, 0),
+                                   (w, 0),
+                                   (0, h),
+                                   (w, h)]
+            .iter()
+            .map(|&(xo, yo)| {
+                CommandVertex {
+                    // Target coordinates
+                    position: [(x_start + xo) as i16, (y_start + yo) as i16],
+                    // Source coordinates
+                    texture_coord: [u_start + xo, v_start + yo],
+                    // Raw texture
+                    texture_blend_mode: 1,
+                    // 16bpp
+                    depth_shift: 0,
+                    // Dithering off
+                    dither: 0,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        self.command_buffer.push_slice(&v).unwrap();
+
+        // We draw from fb_out into fb_out. I hope this doesn't
+        // trigger any kind of weird undefined
+        // behaviour... Alternatively we could first copy into
+        // fb_texture and then into fb_out. This would have the added
+        // benefit of updating both textures. Of course this is
+        // assuming source and destination never overlap, if they do
+        // it becomes even tricker to handle properly.
+
+        self.fb_out.bind(gl::TEXTURE1);
+
+        self.command_buffer.program().uniform1i("fb_texture", 1).unwrap();
+
+        // Bind the out framebuffer
+        let _fb = Framebuffer::new(&self.fb_out);
+
+        // Fill rect commands don't use the draw offset
+        self.command_buffer.program().uniform2i("offset", 0, 0).unwrap();
+
+        unsafe {
+            gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+        }
+
+        self.command_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
+
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+            gl::Enable(gl::SCISSOR_TEST);
+        }
+
+        self.command_buffer.clear().unwrap();
     }
 }
 
