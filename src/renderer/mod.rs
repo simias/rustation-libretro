@@ -1,5 +1,3 @@
-use std::default::Default;
-
 use gl;
 use gl::types::{GLuint, GLint, GLsizei, GLenum, GLfloat};
 use arrayvec::ArrayVec;
@@ -171,7 +169,6 @@ impl GlRenderer {
                                   gl::ZERO,
                                   gl::ONE,
                                   gl::ZERO);
-            gl::Enable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
         }
 
@@ -289,6 +286,7 @@ impl GlRenderer {
 
         unsafe {
             gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+            gl::Enable(gl::SCISSOR_TEST);
         }
 
         get_error()
@@ -307,6 +305,7 @@ impl GlRenderer {
         unsafe {
             gl::LineWidth(self.internal_upscaling as GLfloat);
             gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
+            gl::Enable(gl::SCISSOR_TEST);
         }
 
         // Bind `fb_texture` to texture unit 0
@@ -551,54 +550,43 @@ impl Renderer for GlRenderer {
         // Draw pending commands
         self.draw().unwrap();
 
-        let x_start = top_left.0;
-        let x_end = x_start + dimensions.0;
-        let y_start = top_left.1;
-        let y_end = y_start + dimensions.1;
+        // Fill rect ignores the draw area. Save the previous scissor
+        // settings and reconfigure the scissor box to the fill
+        // rectangle insteadd.
+        let draw_area_top_left = self.config.draw_area_top_left;
+        let draw_area_dimensions = self.config.draw_area_dimensions;
 
-        // We reuse the normal command processing program since it's
-        // pretty much equivalent to drawing a non-textured polygon
-        let v: ArrayVec<[_; 4]> = [(x_start, y_start),
-                                   (x_end, y_start),
-                                   (x_start, y_end),
-                                   (x_end, y_end)]
-            .iter()
-            .map(|&(x, y)| {
-                CommandVertex {
-                    position: [x as i16, y as i16],
-                    color: color,
-                    // No texture
-                    texture_blend_mode: 0,
-                    ..Default::default()
-                }
-            })
+        self.config.draw_area_top_left = top_left;
+        self.config.draw_area_dimensions = dimensions;
+
+        self.apply_scissor();
+
+        // ClearColor takes normalized floating point color components
+        let clear_color: ArrayVec<[_; 3]> =
+            color.iter().map(|&c| (c as f32) / 255.)
             .collect();
 
-        self.command_buffer.push_slice(&v).unwrap();
+        {
+            // Bind the out framebuffer
+            let _fb = Framebuffer::new(&self.fb_out);
 
-        // We use texture unit 0
-        self.command_buffer.program().uniform1i("fb_texture", 0).unwrap();
-
-        // Bind the out framebuffer
-        let _fb = Framebuffer::new(&self.fb_out);
-
-        // Fill rect commands don't use the draw offset
-        self.command_buffer.program().uniform2i("offset", 0, 0).unwrap();
-
-        unsafe {
-            gl::Disable(gl::SCISSOR_TEST);
-            gl::Disable(gl::BLEND);
-            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+            unsafe {
+                gl::ClearColor(clear_color[0],
+                               clear_color[1],
+                               clear_color[2],
+                               // XXX Not entirely sure what happens
+                               // to the mask bit in fill_rect. No$
+                               // seems to say that it's set to 0.
+                               0.);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
         }
 
+        // Reconfigure the draw area
+        self.config.draw_area_top_left = draw_area_top_left;
+        self.config.draw_area_dimensions = draw_area_dimensions;
 
-        self.command_buffer.draw(gl::TRIANGLE_STRIP).unwrap();
-
-        unsafe {
-            gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
-        }
-
-        self.command_buffer.clear().unwrap();
+        self.apply_scissor();
     }
 
     fn load_image(&mut self,
