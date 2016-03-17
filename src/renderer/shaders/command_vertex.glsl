@@ -2,7 +2,7 @@
 
 // Vertex shader for rendering GPU draw commands in the framebuffer
 
-in ivec2 position;
+in ivec3 position;
 in uvec3 color;
 in uvec2 texture_page;
 in uvec2 texture_coord;
@@ -23,12 +23,16 @@ flat out uint frag_depth_shift;
 flat out uint frag_dither;
 
 void main() {
-  ivec2 pos = position + offset;
+  ivec2 pos = position.xy + offset;
 
   // Convert VRAM coordinates (0;1023, 0;511) into OpenGL coordinates
   // (-1;1, -1;1)
   float xpos = (float(pos.x) / 512) - 1.0;
   float ypos = (float(pos.y) / 256) - 1.0;
+
+  // position.z increases as the primitives near the camera so we need
+  // to reverse the order
+  float zpos = 1.0 - (float(position.z) / 65535.);
 
   gl_Position.xyzw = vec4(xpos, ypos, 0.0, 1.0);
 

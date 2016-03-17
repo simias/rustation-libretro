@@ -76,6 +76,16 @@ impl GlType for [i16; 2] {
     }
 }
 
+impl GlType for [i16; 3] {
+    fn attribute_type() -> GLenum {
+        gl::SHORT
+    }
+
+    fn components() -> GlComponents {
+        GlComponents::Triple
+    }
+}
+
 impl GlType for [u16; 2] {
     fn attribute_type() -> GLenum {
         gl::UNSIGNED_SHORT
@@ -103,6 +113,16 @@ impl GlType for [f32; 2] {
 
     fn components() -> GlComponents {
         GlComponents::Pair
+    }
+}
+
+impl GlType for [f32; 3] {
+    fn attribute_type() -> GLenum {
+        gl::FLOAT
+    }
+
+    fn components() -> GlComponents {
+        GlComponents::Triple
     }
 }
 

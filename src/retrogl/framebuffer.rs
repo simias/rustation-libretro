@@ -42,6 +42,21 @@ impl<'a> Framebuffer<'a> {
         error_or(fb)
     }
 
+    pub fn new_with_depth<'n>(color_texture: &'n Texture,
+                              depth_texture: &'n Texture)
+                              -> Result<Framebuffer<'n>, Error> {
+        let fb = try!(Framebuffer::new(color_texture));
+
+        unsafe {
+            gl::FramebufferTexture(gl::DRAW_FRAMEBUFFER,
+                                   gl::DEPTH_ATTACHMENT,
+                                   depth_texture.id(),
+                                   0);
+        }
+
+        error_or(fb)
+    }
+
     pub fn bind(&self) {
         unsafe {
             gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, self.id);

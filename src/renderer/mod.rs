@@ -37,6 +37,8 @@ pub struct GlRenderer {
     fb_texture: Texture,
     /// Framebuffer used as an output when running draw commands
     fb_out: Texture,
+    /// Depth buffer for fb_out
+    fb_out_depth: Texture,
     /// Current resolution of the frontend's framebuffer
     frontend_resolution: (u32, u32),
     /// Current internal resolution upscaling factor
@@ -119,6 +121,10 @@ impl GlRenderer {
                                        native_height * upscaling,
                                        texture_storage));
 
+        let fb_out_depth = try!(Texture::new(fb_out.width(),
+                                             fb_out.height(),
+                                             gl::DEPTH_COMPONENT32F));
+
         let mut state = GlRenderer {
             command_buffer: command_buffer,
             command_draw_mode: gl::TRIANGLES,
@@ -128,6 +134,7 @@ impl GlRenderer {
             config: config,
             fb_texture: fb_texture,
             fb_out: fb_out,
+            fb_out_depth: fb_out_depth,
             frontend_resolution: (0, 0),
             internal_upscaling: upscaling,
             internal_color_depth: depth,
@@ -186,7 +193,11 @@ impl GlRenderer {
         try!(self.command_buffer.program().uniform1i("fb_texture", 0));
 
         // Bind the out framebuffer
-        let _fb = Framebuffer::new(&self.fb_out);
+        let _fb = Framebuffer::new_with_depth(&self.fb_out, &self.fb_out_depth);
+
+        unsafe {
+            gl::Clear(gl::DEPTH_BUFFER_BIT);
+        }
 
         try!(self.command_buffer.draw(self.command_draw_mode));
 
@@ -310,6 +321,7 @@ impl GlRenderer {
             gl::LineWidth(self.internal_upscaling as GLfloat);
             gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
             gl::Enable(gl::SCISSOR_TEST);
+            gl::Enable(gl::DEPTH_TEST);
         }
 
         // Bind `fb_texture` to texture unit 0
@@ -359,6 +371,9 @@ impl GlRenderer {
             self.upload_textures((0, 0),
                                  (VRAM_WIDTH_PIXELS, VRAM_HEIGHT),
                                  &*vram_contents).unwrap();
+
+            self.fb_out_depth =
+                Texture::new(w, h, gl::DEPTH_COMPONENT32F).unwrap();
         }
 
         let dither_scaling =
@@ -406,6 +421,7 @@ impl GlRenderer {
         // First we draw the visible part of fb_out
         unsafe {
             gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::BLEND);
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
         }
@@ -500,8 +516,11 @@ impl Renderer for GlRenderer {
             self.command_draw_mode = gl::LINES;
         }
 
+        let z = self.command_buffer.len() as i16;
+
         let v: ArrayVec<[_; 2]> =
-            vertices.iter().map(|v| CommandVertex::from_vertex(attributes, v))
+            vertices.iter().map(|v|
+                                CommandVertex::from_vertex(attributes, v, z))
             .collect();
 
         self.command_buffer.push_slice(&v).unwrap();
@@ -520,8 +539,11 @@ impl Renderer for GlRenderer {
             self.command_draw_mode = gl::TRIANGLES;
         }
 
+        let z = self.command_buffer.len() as i16;
+
         let v: ArrayVec<[_; 3]> =
-            vertices.iter().map(|v| CommandVertex::from_vertex(attributes, v))
+            vertices.iter().map(|v|
+                                CommandVertex::from_vertex(attributes, v, z))
             .collect();
 
         self.command_buffer.push_slice(&v).unwrap();
@@ -539,8 +561,11 @@ impl Renderer for GlRenderer {
             self.command_draw_mode = gl::TRIANGLES;
         }
 
+        let z = self.command_buffer.len() as i16;
+
         let v: ArrayVec<[_; 4]> =
-            vertices.iter().map(|v| CommandVertex::from_vertex(attributes, v))
+            vertices.iter().map(|v|
+                                CommandVertex::from_vertex(attributes, v, z))
             .collect();
 
         self.command_buffer.push_slice(&v[0..3]).unwrap();
@@ -628,7 +653,7 @@ impl Renderer for GlRenderer {
 #[derive(Default, Debug)]
 struct CommandVertex {
     /// Position in PlayStation VRAM coordinates
-    position: [i16; 2],
+    position: [i16; 3],
     /// RGB color, 8bits per component
     color: [u8; 3],
     /// Texture coordinates within the page
@@ -653,9 +678,10 @@ implement_vertex!(CommandVertex,
 
 impl CommandVertex {
     fn from_vertex(attributes: &PrimitiveAttributes,
-                   v: &Vertex) -> CommandVertex {
+                   v: &Vertex,
+                   z: i16) -> CommandVertex {
         CommandVertex {
-            position: v.position,
+            position: [v.position[0], v.position[1], z],
             color: v.color,
             texture_coord: v.texture_coord,
             texture_page: attributes.texture_page,
