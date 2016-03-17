@@ -59,19 +59,22 @@ impl GlRenderer {
             try!(GlRenderer::build_buffer(
                 include_str!("shaders/command_vertex.glsl"),
                 include_str!("shaders/command_fragment.glsl"),
-                2048));
+                2048,
+                true));
 
         let output_buffer =
             try!(GlRenderer::build_buffer(
                 include_str!("shaders/output_vertex.glsl"),
                 include_str!("shaders/output_fragment.glsl"),
-                4));
+                4,
+                false));
 
         let image_load_buffer =
             try!(GlRenderer::build_buffer(
                 include_str!("shaders/image_load_vertex.glsl"),
                 include_str!("shaders/image_load_fragment.glsl"),
-                4));
+                4,
+                false));
 
         let native_width = VRAM_WIDTH_PIXELS as u32;
         let native_height = VRAM_HEIGHT as u32;
@@ -144,7 +147,8 @@ impl GlRenderer {
 
     fn build_buffer<T>(vertex_shader: &str,
                        fragment_shader: &str,
-                       capacity: usize) -> Result<DrawBuffer<T>, Error>
+                       capacity: usize,
+                       lifo: bool) -> Result<DrawBuffer<T>, Error>
         where T: ::retrogl::vertex::Vertex {
 
         let vs = try!(Shader::new(vertex_shader, ShaderType::Vertex));
@@ -153,7 +157,7 @@ impl GlRenderer {
 
         let program = try!(Program::new(vs, fs));
 
-        DrawBuffer::new(capacity, program)
+        DrawBuffer::new(capacity, program, lifo)
     }
 
     fn draw(&mut self) -> Result<(), Error> {
