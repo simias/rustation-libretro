@@ -4,6 +4,8 @@ uniform sampler2D fb_texture;
 
 // Scaling to apply to the dither pattern
 uniform uint dither_scaling;
+// 0: Only draw opaque pixels, 1: only draw semi-transparent pixels
+uniform uint draw_semi_transparent;
 
 in vec3 frag_shading_color;
 // Texture page: base offset for texture lookup.
@@ -18,6 +20,8 @@ flat in uint frag_texture_blend_mode;
 flat in uint frag_depth_shift;
 // 0: No dithering, 1: dithering enabled
 flat in uint frag_dither;
+// 0: Opaque primitive, 1: semi-transparent primitive
+flat in uint frag_semi_transparent;
 
 out vec4 frag_color;
 
@@ -120,6 +124,18 @@ void main() {
     // draw commands)
     if (is_transparent(texel)) {
       // Fully transparent texel, discard
+      discard;
+    }
+
+    // Bit 15 (stored in the alpha) is used as a flag for
+    // semi-transparency, but only if this is a semi-transparent draw
+    // command
+    uint transparency_flag = uint(floor(texel.a + 0.5));
+
+    uint is_texel_semi_transparent = transparency_flag & frag_semi_transparent;
+
+    if (is_texel_semi_transparent != draw_semi_transparent) {
+      // We're not drawing those texels in this pass, discard
       discard;
     }
 

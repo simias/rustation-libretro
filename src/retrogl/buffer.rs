@@ -25,12 +25,16 @@ pub struct DrawBuffer<T> {
     contains: PhantomData<T>,
     /// Current number of entries in the buffer
     len: usize,
+    /// If true newer items are added *before* older ones
+    /// (i.e. they'll be drawn first)
+    lifo: bool,
 }
 
 impl<T: Vertex> DrawBuffer<T> {
 
     pub fn new(capacity: usize,
-               program: Program) -> Result<DrawBuffer<T>, Error> {
+               program: Program,
+               lifo: bool) -> Result<DrawBuffer<T>, Error> {
 
         let vao = try!(VertexArrayObject::new());
 
@@ -48,6 +52,7 @@ impl<T: Vertex> DrawBuffer<T> {
             id: id,
             contains: PhantomData::<T>,
             len: 0,
+            lifo: lifo,
         };
 
         try!(buf.clear());
@@ -191,7 +196,13 @@ impl<T> DrawBuffer<T> {
 
         let element_size = size_of::<T>();
 
-        let offset_bytes = self.len * element_size;
+        let offset =
+            match self.lifo {
+                false => self.len,
+                true => self.capacity - self.len - n,
+            };
+
+        let offset_bytes = offset * element_size;
 
         let size_bytes = n * element_size;
 
@@ -215,7 +226,13 @@ impl<T> DrawBuffer<T> {
         self.vao.bind();
         self.program.bind();
 
-        unsafe { gl::DrawArrays(mode, 0, self.len as GLsizei) };
+        let first =
+            match self.lifo {
+                false => 0,
+                true => self.remaining_capacity() as GLint,
+            };
+
+        unsafe { gl::DrawArrays(mode, first, self.len as GLsizei) };
 
         get_error()
     }
