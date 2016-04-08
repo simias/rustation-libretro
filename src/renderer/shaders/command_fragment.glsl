@@ -120,37 +120,46 @@ void main() {
     color = vec4(frag_shading_color, 0.);
   } else {
     // Look up texture
-    vec4 texel_00 = sample_texel(vec2(frag_texture_coord.x, frag_texture_coord.y));
-
-    // texel color 0x0000 is always fully transparent (even for opaque
-    // draw commands)
-    if (is_transparent(texel_00)) {
-      // Fully transparent texel, discard
-      discard;
-    }
-
-    // bilinear filtering
-    vec4 texel_10 = sample_texel(vec2(frag_texture_coord.x + 1, frag_texture_coord.y + 0));
-    vec4 texel_01 = sample_texel(vec2(frag_texture_coord.x + 0, frag_texture_coord.y + 1));
-    vec4 texel_11 = sample_texel(vec2(frag_texture_coord.x + 1, frag_texture_coord.y + 1));
-
-    if (is_transparent(texel_10)) {
-      texel_10 = texel_00;
-    }
-
-    if (is_transparent(texel_01)) {
-      texel_01 = texel_00;
-    }
-
-    if (is_transparent(texel_11)) {
-      texel_11 = texel_01;
-    }
 
     float u_frac = fract(frag_texture_coord.x);
     float v_frac = fract(frag_texture_coord.y);
 
-    vec4 texel = (texel_00 * (1 - u_frac) + texel_10 * u_frac) * (1 - v_frac)
-      + (texel_01 * (1 - u_frac) + texel_11 * u_frac) * v_frac;
+    vec4 texel_00;
+
+    if (u_frac + v_frac < 1.0) {
+      // Use bottom-left
+      texel_00 = sample_texel(vec2(frag_texture_coord.x + 0, frag_texture_coord.y + 0));
+    } else {
+      // Use top-right
+      texel_00 = sample_texel(vec2(frag_texture_coord.x + 1, frag_texture_coord.y + 1));
+      float tmp = 1 - v_frac;
+      v_frac = 1 - u_frac;
+      u_frac = tmp;
+    }
+
+    // texel color 0x0000 is always fully transparent (even for opaque
+    // draw commands)
+    //    if (is_transparent(texel_00)) {
+      // Fully transparent texel, discard
+      //discard;
+    //}
+
+    // 3-point filtering
+    vec4 texel_10 = sample_texel(vec2(frag_texture_coord.x + 1, frag_texture_coord.y + 0));
+    vec4 texel_01 = sample_texel(vec2(frag_texture_coord.x + 0, frag_texture_coord.y + 1));
+
+    //if (is_transparent(texel_10)) {
+      //texel_10 = texel_00;
+      //}
+
+    //if (is_transparent(texel_01)) {
+      //texel_01 = texel_00;
+      //}
+
+    vec4 texel = texel_00 + u_frac * (texel_10 - texel_00) + v_frac * (texel_01 - texel_00);
+
+    // vec4 texel = (texel_00 * (1 - u_frac) + texel_10 * u_frac) * (1 - v_frac)
+    //   + (texel_01 * (1 - u_frac) + texel_11 * u_frac) * v_frac;
 
     if (frag_texture_blend_mode == BLEND_MODE_RAW_TEXTURE) {
       color = texel;
