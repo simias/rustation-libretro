@@ -204,9 +204,6 @@ impl GlRenderer {
         // We use texture unit 0
         try!(self.command_buffer.program().uniform1i("fb_texture", 0));
 
-        try!(self.command_buffer.program()
-             .uniform1ui("draw_semi_transparent", 0));
-
         // Bind the out framebuffer
         let _fb = Framebuffer::new_with_depth(&self.fb_out, &self.fb_out_depth);
 
@@ -214,12 +211,68 @@ impl GlRenderer {
             gl::Clear(gl::DEPTH_BUFFER_BIT);
         }
 
+        // First we draw the opaque vertices
+        try!(self.command_buffer.program()
+             .uniform1ui("draw_semi_transparent", 0));
+
         try!(self.command_buffer.draw(self.command_draw_mode));
+
+        try!(self.command_buffer.clear());
+
+        // Then the semi-transparent vertices
+        if !self.semi_transparent_vertices.is_empty() {
+
+            // Emulation of the various PSX blending mode using a
+            // combination of constant alpha/color (to emulate
+            // constant 1/4 and 1/2 factors) and blending equation.
+            let (blend_func, blend_src, blend_dst) =
+                match self.semi_transparency_mode {
+                    SemiTransparencyMode::Average =>
+                        (gl::FUNC_ADD,
+                         // Set to 0.5 with gl::BlendColor
+                         gl::CONSTANT_ALPHA,
+                         gl::CONSTANT_ALPHA),
+                    SemiTransparencyMode::Add =>
+                        (gl::FUNC_ADD,
+                         gl::ONE,
+                         gl::ONE),
+                    SemiTransparencyMode::SubstractSource =>
+                        (gl::FUNC_REVERSE_SUBTRACT,
+                         gl::ONE,
+                         gl::ONE),
+                    SemiTransparencyMode::AddQuarterSource =>
+                        (gl::FUNC_ADD,
+                         // Set to 0.25 with gl::BlendColor
+                         gl::CONSTANT_COLOR,
+                         gl::ONE),
+                };
+
+            unsafe {
+                gl::BlendFuncSeparate(blend_src,
+                                      blend_dst,
+                                      gl::ONE,
+                                      gl::ZERO);
+
+                gl::BlendEquationSeparate(blend_func, gl::FUNC_ADD);
+
+                gl::Enable(gl::BLEND);
+            }
+
+            try!(self.command_buffer.program()
+                 .uniform1ui("draw_semi_transparent", 1));
+
+            try!(self.command_buffer
+                 .push_slice(&self.semi_transparent_vertices));
+
+            try!(self.command_buffer.draw(self.command_draw_mode));
+
+            try!(self.command_buffer.clear());
+            self.semi_transparent_vertices.clear();
+        }
 
         self.primitive_ordering = 0;
 
-        self.semi_transparent_vertices.clear();
-        self.command_buffer.clear()
+        Ok(())
     }
 
     fn apply_scissor(&mut self) {
@@ -341,6 +394,8 @@ impl GlRenderer {
             gl::Enable(gl::SCISSOR_TEST);
             gl::Enable(gl::DEPTH_TEST);
             gl::DepthFunc(gl::LEQUAL);
+            // Used for PSX GPU command blending
+            gl::BlendColor(0.25, 0.25, 0.25, 0.5);
         }
 
         // Bind `fb_texture` to texture unit 0
