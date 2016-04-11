@@ -3,7 +3,7 @@ use gl::types::{GLuint, GLint, GLsizei, GLenum, GLfloat};
 use arrayvec::ArrayVec;
 use libc::c_uint;
 use rustation::gpu::renderer::{Renderer, Vertex, PrimitiveAttributes};
-use rustation::gpu::renderer::{TextureDepth, BlendMode};
+use rustation::gpu::renderer::{TextureDepth, BlendMode, SemiTransparencyMode};
 use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
 
 use retrogl::DrawConfig;
@@ -22,9 +22,14 @@ use libretro;
 pub struct GlRenderer {
     /// Buffer used to handle PlayStation GPU draw commands
     command_buffer: DrawBuffer<CommandVertex>,
-    /// Primitive type for the vertices in `command_buffer` (TRIANGLES
-    /// or LINES)
+    /// Primitive type for the vertices in the command buffers
+    /// (TRIANGLES or LINES)
     command_draw_mode: GLenum,
+    /// Temporary buffer holding vertices for semi-transparent draw
+    /// commands.
+    semi_transparent_vertices: Vec<CommandVertex>,
+    /// Transparency mode for semi-transparent commands
+    semi_transparency_mode: SemiTransparencyMode,
     /// Polygon mode (for wireframe)
     command_polygon_mode: GLenum,
     /// Buffer used to draw to the frontend's framebuffer
@@ -61,7 +66,7 @@ impl GlRenderer {
         info!("Building OpenGL state ({}x internal res., {}bpp)",
               upscaling, depth);
 
-        let command_buffer =
+        let opaque_command_buffer =
             try!(GlRenderer::build_buffer(
                 include_str!("shaders/command_vertex.glsl"),
                 include_str!("shaders/command_fragment.glsl"),
@@ -94,7 +99,7 @@ impl GlRenderer {
         if depth > 16 {
             // Dithering is superfluous when we increase the internal
             // color depth
-            try!(command_buffer.disable_attribute("dither"));
+            try!(opaque_command_buffer.disable_attribute("dither"));
         }
 
         let dither_scaling =
@@ -111,7 +116,7 @@ impl GlRenderer {
                 gl::FILL
             };
 
-        try!(command_buffer.program()
+        try!(opaque_command_buffer.program()
              .uniform1ui("dither_scaling", dither_scaling));
 
         let texture_storage =
@@ -130,8 +135,10 @@ impl GlRenderer {
                                              gl::DEPTH_COMPONENT32F));
 
         let mut state = GlRenderer {
-            command_buffer: command_buffer,
+            command_buffer: opaque_command_buffer,
             command_draw_mode: gl::TRIANGLES,
+            semi_transparent_vertices: Vec::with_capacity(2048),
+            semi_transparency_mode: SemiTransparencyMode::Average,
             command_polygon_mode: command_draw_mode,
             output_buffer: output_buffer,
             image_load_buffer: image_load_buffer,
@@ -197,6 +204,9 @@ impl GlRenderer {
         // We use texture unit 0
         try!(self.command_buffer.program().uniform1i("fb_texture", 0));
 
+        try!(self.command_buffer.program()
+             .uniform1ui("draw_semi_transparent", 0));
+
         // Bind the out framebuffer
         let _fb = Framebuffer::new_with_depth(&self.fb_out, &self.fb_out_depth);
 
@@ -208,6 +218,7 @@ impl GlRenderer {
 
         self.primitive_ordering = 0;
 
+        self.semi_transparent_vertices.clear();
         self.command_buffer.clear()
     }
 
@@ -483,6 +494,35 @@ impl GlRenderer {
         libretro::gl_frame_done(self.frontend_resolution.0,
                                 self.frontend_resolution.1)
     }
+
+    /// Check if a new primitive's attributes are somehow incompatible
+    /// with the ones currently buffered, in which case we must force
+    /// a draw to flush the buffers.
+    fn maybe_force_draw(&mut self,
+                        nvertices: usize,
+                        draw_mode: GLenum,
+                        attributes: &PrimitiveAttributes) {
+        let force_draw =
+            // Check if we have enough room left in the buffer
+            self.command_buffer.remaining_capacity() < nvertices ||
+            // Check if we're changing the draw mode (line <=> triangle)
+            self.command_draw_mode != draw_mode ||
+            // Check if we're changing the semi-transparency mode
+            (attributes.semi_transparent &&
+             !self.semi_transparent_vertices.is_empty() &&
+             self.semi_transparency_mode != attributes.semi_transparency_mode);
+
+        if force_draw {
+            self.draw().unwrap();
+
+            // Update the state machine for the next primitive
+            self.command_draw_mode = draw_mode;
+
+            if attributes.semi_transparent {
+                self.semi_transparency_mode = attributes.semi_transparency_mode;
+            }
+        }
+    }
 }
 
 impl Renderer for GlRenderer {
@@ -515,39 +555,30 @@ impl Renderer for GlRenderer {
                  attributes: &PrimitiveAttributes,
                  vertices: &[Vertex; 2]) {
 
-        let force_draw =
-            self.command_buffer.remaining_capacity() < 2 ||
-            self.command_draw_mode != gl::LINES;
-
-        if force_draw {
-            self.draw().unwrap();
-            self.command_draw_mode = gl::LINES;
-        }
+        self.maybe_force_draw(2, gl::LINES, attributes);
 
         let z = self.primitive_ordering;
 
         self.primitive_ordering += 1;
 
-        let v: ArrayVec<[_; 2]> =
+        let iter =
             vertices.iter().map(|v|
-                                CommandVertex::from_vertex(attributes, v, z))
-            .collect();
+                                CommandVertex::from_vertex(attributes, v, z));
 
-        self.command_buffer.push_slice(&v).unwrap();
+        if attributes.semi_transparent {
+            self.semi_transparent_vertices.extend(iter);
+        } else {
+            let v: ArrayVec<[_; 2]> = iter.collect();
+
+            self.command_buffer.push_slice(&v).unwrap();
+        }
     }
 
     fn push_triangle(&mut self,
                      attributes: &PrimitiveAttributes,
                      vertices: &[Vertex; 3]) {
 
-        let force_draw =
-            self.command_buffer.remaining_capacity() < 3 ||
-            self.command_draw_mode != gl::TRIANGLES;
-
-        if force_draw {
-            self.draw().unwrap();
-            self.command_draw_mode = gl::TRIANGLES;
-        }
+        self.maybe_force_draw(3, gl::TRIANGLES, attributes);
 
         let z = self.primitive_ordering;
 
@@ -558,20 +589,28 @@ impl Renderer for GlRenderer {
                                 CommandVertex::from_vertex(attributes, v, z))
             .collect();
 
-        self.command_buffer.push_slice(&v).unwrap();
+        let needs_opaque_draw =
+            !attributes.semi_transparent ||
+            // Textured semi-transparent polys can contain opaque
+            // texels (when bit 15 of the color is set to
+            // 0). Therefore they're drawn twice, once for the opaque
+            // texels and once for the semi-transparent ones
+            attributes.blend_mode != BlendMode::None;
+
+        if needs_opaque_draw {
+            self.command_buffer.push_slice(&v).unwrap();
+        }
+
+        if attributes.semi_transparent {
+            self.semi_transparent_vertices.extend_from_slice(&v);
+        }
     }
 
     fn push_quad(&mut self,
                  attributes: &PrimitiveAttributes,
                  vertices: &[Vertex; 4]) {
-        let force_draw =
-            self.command_buffer.remaining_capacity() < 6 ||
-            self.command_draw_mode != gl::TRIANGLES;
 
-        if force_draw {
-            self.draw().unwrap();
-            self.command_draw_mode = gl::TRIANGLES;
-        }
+        self.maybe_force_draw(6, gl::TRIANGLES, attributes);
 
         let z = self.primitive_ordering;
 
@@ -582,8 +621,23 @@ impl Renderer for GlRenderer {
                                 CommandVertex::from_vertex(attributes, v, z))
             .collect();
 
-        self.command_buffer.push_slice(&v[0..3]).unwrap();
-        self.command_buffer.push_slice(&v[1..4]).unwrap();
+        let needs_opaque_draw =
+            !attributes.semi_transparent ||
+            // Textured semi-transparent polys can contain opaque
+            // texels (when bit 15 of the color is set to
+            // 0). Therefore they're drawn twice, once for the opaque
+            // texels and once for the semi-transparent ones
+            attributes.blend_mode != BlendMode::None;
+
+        if needs_opaque_draw {
+            self.command_buffer.push_slice(&v[0..3]).unwrap();
+            self.command_buffer.push_slice(&v[1..4]).unwrap();
+        }
+
+        if attributes.semi_transparent {
+            self.semi_transparent_vertices.extend_from_slice(&v[0..3]);
+            self.semi_transparent_vertices.extend_from_slice(&v[1..4]);
+        }
     }
 
     fn fill_rect(&mut self,
@@ -664,7 +718,7 @@ impl Renderer for GlRenderer {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 struct CommandVertex {
     /// Position in PlayStation VRAM coordinates
     position: [i16; 3],
@@ -683,12 +737,14 @@ struct CommandVertex {
     depth_shift: u8,
     /// True if dithering is enabled for this primitive
     dither: u8,
+    /// 0: primitive is opaque, 1: primitive is semi-transparent
+    semi_transparent: u8,
 }
 
 implement_vertex!(CommandVertex,
                   position, color, texture_page,
                   texture_coord, clut, texture_blend_mode,
-                  depth_shift, dither);
+                  depth_shift, dither, semi_transparent);
 
 impl CommandVertex {
     fn from_vertex(attributes: &PrimitiveAttributes,
@@ -711,6 +767,7 @@ impl CommandVertex {
                 TextureDepth::T16Bpp => 0,
             },
             dither: attributes.dither as u8,
+            semi_transparent: attributes.semi_transparent as u8,
         }
     }
 }
