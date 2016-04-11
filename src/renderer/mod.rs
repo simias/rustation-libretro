@@ -45,10 +45,14 @@ pub struct GlRenderer {
     internal_upscaling: u32,
     /// Current internal color depth
     internal_color_depth: u8,
+    /// Counter for preserving primitive draw order in the z-buffer
+    /// since we draw semi-transparent primitives out-of-order.
+    primitive_ordering: i16,
 }
 
 impl GlRenderer {
     pub fn from_config(config: DrawConfig) -> Result<GlRenderer, Error> {
+
         let upscaling = CoreVariables::internal_upscale_factor();
         let depth = CoreVariables::internal_color_depth();
         let scale_dither = CoreVariables::scale_dither();
@@ -138,6 +142,7 @@ impl GlRenderer {
             frontend_resolution: (0, 0),
             internal_upscaling: upscaling,
             internal_color_depth: depth,
+            primitive_ordering: 0,
         };
 
         // Yet an other copy of this 1MB array to make the borrow
@@ -200,6 +205,8 @@ impl GlRenderer {
         }
 
         try!(self.command_buffer.draw(self.command_draw_mode));
+
+        self.primitive_ordering = 0;
 
         self.command_buffer.clear()
     }
@@ -322,6 +329,7 @@ impl GlRenderer {
             gl::PolygonMode(gl::FRONT_AND_BACK, self.command_polygon_mode);
             gl::Enable(gl::SCISSOR_TEST);
             gl::Enable(gl::DEPTH_TEST);
+            gl::DepthFunc(gl::LEQUAL);
         }
 
         // Bind `fb_texture` to texture unit 0
@@ -516,7 +524,9 @@ impl Renderer for GlRenderer {
             self.command_draw_mode = gl::LINES;
         }
 
-        let z = self.command_buffer.len() as i16;
+        let z = self.primitive_ordering;
+
+        self.primitive_ordering += 1;
 
         let v: ArrayVec<[_; 2]> =
             vertices.iter().map(|v|
@@ -539,7 +549,9 @@ impl Renderer for GlRenderer {
             self.command_draw_mode = gl::TRIANGLES;
         }
 
-        let z = self.command_buffer.len() as i16;
+        let z = self.primitive_ordering;
+
+        self.primitive_ordering += 1;
 
         let v: ArrayVec<[_; 3]> =
             vertices.iter().map(|v|
@@ -561,7 +573,9 @@ impl Renderer for GlRenderer {
             self.command_draw_mode = gl::TRIANGLES;
         }
 
-        let z = self.command_buffer.len() as i16;
+        let z = self.primitive_ordering;
+
+        self.primitive_ordering += 1;
 
         let v: ArrayVec<[_; 4]> =
             vertices.iter().map(|v|

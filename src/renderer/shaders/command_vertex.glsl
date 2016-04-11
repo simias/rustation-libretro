@@ -30,11 +30,11 @@ void main() {
   float xpos = (float(pos.x) / 512) - 1.0;
   float ypos = (float(pos.y) / 256) - 1.0;
 
-  // position.z increases as the primitives near the camera so we need
-  // to reverse the order
-  float zpos = 1.0 - (float(position.z) / 65535.);
+  // position.z increases as the primitives near the camera so we
+  // reverse the order to match the common GL convention
+  float zpos = 1.0 - (float(position.z) / 32768.);
 
-  gl_Position.xyzw = vec4(xpos, ypos, 0.0, 1.0);
+  gl_Position.xyzw = vec4(xpos, ypos, zpos, 1.0);
 
   // Glium doesn't support "normalized" for now
   frag_shading_color = vec3(color) / 255.;

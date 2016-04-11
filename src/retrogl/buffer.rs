@@ -62,10 +62,6 @@ impl<T: Vertex> DrawBuffer<T> {
         error_or(buf)
     }
 
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
     /// Specify the vertex attriute layout and bind them to the VAO
     fn bind_attributes(&self)-> Result<(), Error> {
         self.vao.bind();
