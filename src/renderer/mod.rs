@@ -572,10 +572,10 @@ impl GlRenderer {
 
             // Update the state machine for the next primitive
             self.command_draw_mode = draw_mode;
+        }
 
-            if attributes.semi_transparent {
-                self.semi_transparency_mode = attributes.semi_transparency_mode;
-            }
+        if attributes.semi_transparent {
+            self.semi_transparency_mode = attributes.semi_transparency_mode;
         }
     }
 }
