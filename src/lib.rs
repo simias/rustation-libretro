@@ -7,10 +7,13 @@ mod renderer;
 
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::str::FromStr;
 
 use libc::{c_char, c_uint};
+
+use rustc_serialize::json;
+use rustc_serialize::{Decodable, Encodable, Decoder, Encoder};
 
 use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
@@ -30,6 +33,7 @@ extern crate gl;
 extern crate rustation;
 extern crate arrayvec;
 extern crate cdimage;
+extern crate rustc_serialize;
 
 /// Static system information sent to the frontend on request
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
@@ -68,7 +72,7 @@ impl Context {
         let (cpu, video_clock) = try!(Context::load_disc(disc));
         let shared_state = SharedState::new();
         let retrogl = try!(retrogl::RetroGl::new(video_clock));
-
+        
         Ok(Context {
             retrogl: retrogl,
             cpu: cpu,
@@ -287,6 +291,19 @@ impl libretro::Context for Context {
         let cpu = &mut self.cpu;
         let shared_state = &mut self.shared_state;
         let debugger = &mut self.debugger;
+
+        let mut encoded = String::new();
+
+        {
+            let mut encoder = json::Encoder::new_pretty(&mut encoded);
+
+            cpu.encode(&mut encoder).unwrap();
+        }
+
+        let mut f = File::create("/tmp/savestate.json").unwrap();
+
+        f.write_all(encoded.as_bytes()).unwrap();
+
 
         if libretro::key_pressed(0, libretro::Key::Pause) {
             // Trigger the debugger
