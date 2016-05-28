@@ -31,6 +31,12 @@ pub trait Context {
     fn gl_context_reset(&mut self);
     /// The OpenGL context is about to be destroyed
     fn gl_context_destroy(&mut self);
+    /// Return the maximum size of a save state in bytes
+    fn serialize_size(&self) -> usize;
+    /// Serialize the savestate in the provided buffer
+    fn serialize(&self, &mut [u8]) -> Result<(), ()>;
+    /// Deserialize the savestate from the provided buffer
+    fn unserialize(&mut self, &[u8]) -> Result<(), ()>;
 }
 
 /// Global context instance holding our emulator state. Libretro 1
@@ -778,19 +784,34 @@ pub unsafe extern "C" fn retro_run() {
 
 #[no_mangle]
 pub extern "C" fn retro_serialize_size() -> size_t {
-    0
+    context().serialize_size()
 }
 
 #[no_mangle]
-pub extern "C" fn retro_serialize(_data: *mut c_void,
-                                  _size: size_t) -> bool {
-    false
+pub extern "C" fn retro_serialize(data: *mut c_void,
+                                  size: size_t) -> bool {
+    let data = unsafe {
+        ::std::slice::from_raw_parts_mut(data as *mut u8, size)
+    };
+
+    // Set the buffer to 0 in case parts of it remain unused, it'll
+    // avoid putting garbage in the save file and might help with
+    // compression
+    for b in data.iter_mut() {
+        *b = 0;
+    }
+
+    context().serialize(data).is_ok()
 }
 
 #[no_mangle]
-pub extern "C" fn retro_unserialize(_data: *const c_void,
-                                    _size: size_t) -> bool {
-    false
+pub extern "C" fn retro_unserialize(data: *const c_void,
+                                    size: size_t) -> bool {
+    let data = unsafe {
+        ::std::slice::from_raw_parts(data as *const u8, size)
+    };
+
+    context().unserialize(data).is_ok()
 }
 
 #[no_mangle]
@@ -920,6 +941,18 @@ pub mod dummy {
 
         fn gl_context_destroy(&mut self) {
             panic!("Called context_destroy with no context!");
+        }
+
+        fn serialize_size(&self) -> usize {
+            panic!("Called serialize_size with no context!");
+        }
+
+        fn serialize(&self, _: &mut [u8]) -> Result<(), ()> {
+            panic!("Called serialize with no context!");
+        }
+
+        fn unserialize(&mut self, _: &[u8]) -> Result<(), ()> {
+            panic!("Called unserialize with no context!");
         }
     }
 }

@@ -4,6 +4,7 @@ pub mod libretro;
 mod retrogl;
 mod retrolog;
 mod renderer;
+mod savestate;
 
 use std::path::{Path, PathBuf};
 use std::fs::File;
@@ -12,12 +13,15 @@ use std::str::FromStr;
 
 use libc::{c_char, c_uint};
 
+use rustc_serialize::{Encodable, Encoder, Decodable, Decoder};
+
 use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
+use rustation::bios::db::Metadata;
 use rustation::gpu::{Gpu, VideoClock};
 use rustation::memory::Interconnect;
 use rustation::cpu::Cpu;
-use rustation::padmemcard::gamepad::{Button, ButtonState};
+use rustation::padmemcard::gamepad::{Button, ButtonState, DigitalProfile};
 use rustation::shared::SharedState;
 use rustation::debugger::Debugger;
 
@@ -30,6 +34,7 @@ extern crate gl;
 extern crate rustation;
 extern crate arrayvec;
 extern crate cdimage;
+extern crate rustc_serialize;
 
 /// Static system information sent to the frontend on request
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
@@ -60,6 +65,8 @@ struct Context {
     /// Internal display coordinates in VRAM at the end of the
     /// previous frame. Used for internal FPS calculations.
     prev_display_start: (u16, u16),
+    /// Cached value for the maximum savestate size in bytes
+    savestate_max_len: usize,
 }
 
 impl Context {
@@ -69,18 +76,183 @@ impl Context {
         let shared_state = SharedState::new();
         let retrogl = try!(retrogl::RetroGl::new(video_clock));
 
-        Ok(Context {
-            retrogl: retrogl,
-            cpu: cpu,
-            shared_state: shared_state,
-            debugger: Debugger::new(),
-            disc_path: disc.to_path_buf(),
-            video_clock: video_clock,
-            frame_count: 0,
-            monitor_internal_fps: CoreVariables::display_internal_fps(),
-            internal_frame_count: 0,
-            prev_display_start: (0, 0),
-        })
+        let mut context =
+            Context {
+                retrogl: retrogl,
+                cpu: cpu,
+                shared_state: shared_state,
+                debugger: Debugger::new(),
+                disc_path: disc.to_path_buf(),
+                video_clock: video_clock,
+                frame_count: 0,
+                monitor_internal_fps: CoreVariables::display_internal_fps(),
+                internal_frame_count: 0,
+                prev_display_start: (0, 0),
+                savestate_max_len: 0,
+            };
+
+        let max_len = try!(context.compute_savestate_max_length());
+
+        context.savestate_max_len = max_len;
+
+        context.setup_controllers();
+
+        Ok(context)
+    }
+
+    /// Initialize the controllers connected to the emulated console
+    fn setup_controllers(&mut self) {
+        // XXX for now I only hardcode a digital pad in slot 1
+        // (leaving slot 0 disconnected).
+        self.cpu.interconnect_mut()
+            .pad_memcard_mut()
+            .gamepads_mut()[0]
+            .set_profile(Box::new(DigitalProfile::new()));
+    }
+
+    fn compute_savestate_max_length(&mut self) -> Result<usize, ()> {
+        // In order to get the full size we're just going to use a
+        // dummy Write struct which will just count how many bytes are
+        // being written
+        struct WriteCounter(usize);
+
+        impl ::std::io::Write for WriteCounter {
+            fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
+                let len = buf.len();
+
+                self.0 += len;
+
+                Ok(len)
+            }
+
+            fn flush(&mut self) -> ::std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut counter = WriteCounter(0);
+
+        try!(self.save_state(&mut counter));
+
+        let len = counter.0;
+
+        // Our savestate format has variable length, in particular we
+        // have the GPU's load_buffer which can grow to 1MB in the
+        // worst case scenario (the entire VRAM). I'm going to be
+        // optimistic here and give us 512KB of "headroom", that
+        // should be enough 99% of the time, hopefully.
+        let len = len + 512 * 1024;
+
+        Ok(len)
+    }
+
+    fn save_state(&self, writer: &mut ::std::io::Write) -> Result<(), ()> {
+
+        let mut encoder =
+            match savestate::Encoder::new(writer) {
+                Ok(encoder) => encoder,
+                Err(e) => {
+                    warn!("Couldn't create savestate encoder: {:?}", e);
+                    return Err(())
+                }
+            };
+
+        match self.encode(&mut encoder) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                warn!("Couldn't serialize emulator state: {:?}", e);
+                Err(())
+            }
+        }
+    }
+
+    fn load_state(&mut self, reader: &mut ::std::io::Read) -> Result<(), ()> {
+        let mut decoder =
+            match savestate::Decoder::new(reader) {
+                Ok(decoder) => decoder,
+                Err(e) => {
+                    warn!("Couldn't create savestate decoder: {:?}", e);
+                    return Err(())
+                }
+            };
+
+        // I don't implement Decodable for Context itself because I
+        // don't want to create a brand new instance. Things like the
+        // debugger or disc path don't need to be reset
+        let decoded =
+            decoder.read_struct("Context", 4, |d| {
+                let cpu = try!(d.read_struct_field("cpu", 0,
+                                                   Decodable::decode));
+
+                let retrogl = try!(d.read_struct_field("retrogl", 1,
+                                                       Decodable::decode));
+
+                let video_clock = try!(d.read_struct_field("video_clock", 2,
+                                                           Decodable::decode));
+
+                let shared_state = try!(d.read_struct_field("shared_state", 3,
+                                                            Decodable::decode));
+
+                Ok((cpu, retrogl, video_clock, shared_state))
+            });
+
+        let (cpu, retrogl, video_clock, shared_state) =
+            match decoded {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!("Couldn't decode savestate: {:?}", e);
+                    return Err(())
+                }
+            };
+
+        // The savestate doesn't contain the BIOS, only the metadata
+        // describing which BIOS was used when the savestate was made
+        // (in order to save space and not redistribute the BIOS with
+        // savestate files). So let's find it back and reload it.
+        let bios_md = self.cpu.interconnect().bios().metadata();
+
+        // Convert sha256 to a hex string for pretty printing
+        let sha256_hex: String =
+            bios_md.sha256.iter()
+            .fold(String::new(), |s, b| s + &format!("{:02x}", b));
+
+        info!("Loading savestate BIOS: {:?} (SHA256: {})",
+              bios_md, sha256_hex);
+
+        let bios =
+            match Context::find_bios(|md| { md.sha256 == bios_md.sha256 }) {
+                Some(b) => b,
+                None => {
+                    error!("Couldn't find the savestate BIOS, bailing out");
+                    return Err(());
+                }
+            };
+
+        let gl_is_valid = self.retrogl.is_valid();
+
+        // Save the disc before we replace everything
+        let disc = self.cpu.interconnect_mut().cdrom_mut().remove_disc();
+
+        self.cpu = cpu;
+        self.retrogl = retrogl;
+        self.video_clock = video_clock;
+        self.shared_state = shared_state;
+
+        self.cpu.interconnect_mut().set_bios(bios);
+        self.cpu.interconnect_mut().cdrom_mut().set_disc(disc);
+
+        self.setup_controllers();
+
+        // If we had a valid GL context before the load we can
+        // directly reload everything. Otherwise it'll be done when
+        // the frontend calls context_reset
+        if gl_is_valid {
+            self.retrogl.context_reset();
+        }
+
+        info!("Savestate load successful");
+
+        Ok(())
     }
 
     fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
@@ -107,7 +279,7 @@ impl Context {
         info!("Detected disc region: {:?}", region);
 
         let bios =
-            match Context::find_bios(region) {
+            match Context::find_bios(|md| { md.region == region }) {
                 Some(b) => b,
                 None => {
                     error!("Couldn't find a BIOS, bailing out");
@@ -138,7 +310,8 @@ impl Context {
     }
 
     /// Attempt to find a BIOS for `region` in the system directory
-    fn find_bios(region: Region) -> Option<Bios> {
+    fn find_bios<F>(predicate: F) -> Option<Bios>
+        where F: Fn(&Metadata) -> bool {
         let system_directory =
             match libretro::get_system_directory() {
                 Some(dir) => dir,
@@ -154,9 +327,7 @@ impl Context {
                 }
             };
 
-        info!("Looking for a BIOS for region {:?} in {:?}",
-              region,
-              system_directory);
+        info!("Looking for a suitable BIOS in {:?}", system_directory);
 
         let dir =
             match ::std::fs::read_dir(&system_directory) {
@@ -180,7 +351,7 @@ impl Context {
                             } else if md.len() != BIOS_SIZE as u64 {
                                 debug!("Ignoring {:?}: bad size", path);
                             } else {
-                                let bios = Context::try_bios(region, &path);
+                                let bios = Context::try_bios(&predicate, &path);
 
                                 if bios.is_some() {
                                     // Found a valid BIOS!
@@ -201,7 +372,8 @@ impl Context {
     }
 
     /// Attempt to read and load the BIOS at `path`
-    fn try_bios(region: Region, path: &Path) -> Option<Bios> {
+    fn try_bios<F>(predicate: F, path: &Path) -> Option<Bios>
+        where F: Fn(&Metadata) -> bool {
 
         let mut file =
             match File::open(&path) {
@@ -235,18 +407,16 @@ impl Context {
             Some(bios) => {
                 let md = bios.metadata();
 
+                info!("Found BIOS DB entry for {:?}: {:?}", path, md);
+
                 if md.known_bad {
                     warn!("Ignoring {:?}: known bad dump", path);
                     None
-                } else if md.region != region {
-                    info!("Ignoring {:?}: bad region ({:?})", path, md.region);
+                } else if !predicate(md) {
+                    info!("Ignoring {:?}: rejected by predicate", path);
                     None
                 } else {
-                    info!("Using BIOS {:?} ({:?}, version {}.{})",
-                          path,
-                          md.region,
-                          md.version_major,
-                          md.version_minor);
+                    info!("Using BIOS {:?} ({:?})", path, md);
                     Some(bios)
                 }
             }
@@ -259,9 +429,10 @@ impl Context {
 
     fn poll_controllers(&mut self) {
         // XXX we only support pad 0 for now
-        let pad = &mut *self.cpu.interconnect_mut()
+        let pad = self.cpu.interconnect_mut()
             .pad_memcard_mut()
-            .pad_profiles()[0];
+            .gamepads_mut()[0]
+            .profile_mut();
 
         for &(retrobutton, psxbutton) in &BUTTON_MAP {
             let state =
@@ -355,6 +526,35 @@ impl libretro::Context for Context {
 
     fn gl_context_destroy(&mut self) {
         self.retrogl.context_destroy();
+    }
+
+    fn serialize_size(&self) -> usize {
+        self.savestate_max_len
+    }
+
+    fn serialize(&self, mut buf: &mut [u8]) -> Result<(), ()> {
+        self.save_state(&mut buf)
+    }
+
+    fn unserialize(&mut self, mut buf: &[u8]) -> Result<(), ()> {
+        self.load_state(&mut buf)
+    }
+}
+
+impl Encodable for Context {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_struct("Context", 4, |s| {
+            try!(s.emit_struct_field("cpu", 0,
+                                     |s| self.cpu.encode(s)));
+            try!(s.emit_struct_field("retrogl", 1,
+                                     |s| self.retrogl.encode(s)));
+            try!(s.emit_struct_field("video_clock", 2,
+                                     |s| self.video_clock.encode(s)));
+            try!(s.emit_struct_field("shared_state", 3,
+                                     |s| self.shared_state.encode(s)));
+
+            Ok(())
+        })
     }
 }
 
