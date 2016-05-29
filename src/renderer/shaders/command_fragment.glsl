@@ -6,6 +6,14 @@ uniform sampler2D fb_texture;
 uniform uint dither_scaling;
 // 0: Only draw opaque pixels, 1: only draw semi-transparent pixels
 uniform uint draw_semi_transparent;
+// Texture window X mask
+uniform uint tex_x_mask;
+// Texture window X OR value
+uniform uint tex_x_or;
+// Texture window Y mask
+uniform uint tex_y_mask;
+// Texture window Y OR value
+uniform uint tex_y_or;
 
 in vec3 frag_shading_color;
 // Texture page: base offset for texture lookup.
@@ -30,8 +38,8 @@ const uint BLEND_MODE_RAW_TEXTURE   = 1U;
 const uint BLEND_MODE_TEXTURE_BLEND = 2U;
 
 // Read a pixel in VRAM
-vec4 vram_get_pixel(int x, int y) {
-  return texelFetch(fb_texture, ivec2(x, y), 0);
+vec4 vram_get_pixel(uint x, uint y) {
+  return texelFetch(fb_texture, ivec2(x & 0x3ffU, y & 0x1ffU), 0);
 }
 
 // Take a normalized color and convert it into a 16bit 1555 ABGR
@@ -74,18 +82,21 @@ void main() {
     // Number of texel per VRAM 16bit "pixel" for the current depth
     uint pix_per_hw = 1U << frag_depth_shift;
 
-    // 8 and 4bpp textures contain several texels per 16bit VRAM
-    // "pixel"
-    float tex_x_float = frag_texture_coord.x / float(pix_per_hw);
-
     // Texture pages are limited to 256x256 pixels
-    int tex_x = int(tex_x_float) & 0xff;
-    int tex_y = int(frag_texture_coord.y) & 0xff;
+    uint tex_x = uint(frag_texture_coord.x) & 0xffU;
+    uint tex_y = uint(frag_texture_coord.y) & 0xffU;
 
-    tex_x += int(frag_texture_page.x);
-    tex_y += int(frag_texture_page.y);
+    // Texture window adjustments
+    tex_x = (tex_x & tex_x_mask) | tex_x_or;
+    tex_y = (tex_y & tex_y_mask) | tex_y_or;
 
-    vec4 texel = vram_get_pixel(tex_x, tex_y);
+    // Adjust x coordinate based on the texel color depth.
+    uint tex_x_pix = tex_x / pix_per_hw;
+
+    tex_x_pix += frag_texture_page.x;
+    tex_y     += frag_texture_page.y;
+
+    vec4 texel = vram_get_pixel(tex_x_pix, tex_y);
 
     if (frag_depth_shift > 0U) {
       // 8 and 4bpp textures are paletted so we need to lookup the
@@ -104,8 +115,8 @@ void main() {
       // 0xf for 4bpp, 0xff for 8bpp
       uint mask = ((1U << bpp) - 1U);
 
-      // 0...3 for 4bpp, 1...2 for 8bpp
-      uint align = uint(fract(tex_x_float) * pix_per_hw);
+      // 0...3 for 4bpp, 0...1 for 8bpp
+      uint align = tex_x & ((1U << frag_depth_shift) - 1U);
 
       // 0, 4, 8 or 12 for 4bpp, 0 or 8 for 8bpp
       uint shift = (align * bpp);
@@ -113,8 +124,8 @@ void main() {
       // Finally we have the index in the CLUT
       uint index = (icolor >> shift) & mask;
 
-      int clut_x = int(frag_clut.x + index);
-      int clut_y = int(frag_clut.y);
+      uint clut_x = frag_clut.x + index;
+      uint clut_y = frag_clut.y;
 
       // Look up the real color for the texel in the CLUT
       texel = vram_get_pixel(clut_x, clut_y);

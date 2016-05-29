@@ -201,6 +201,12 @@ impl GlRenderer {
                                                      x as GLint,
                                                      y as GLint));
 
+        // XXX implement me
+        try!(self.command_buffer.program().uniform1ui("tex_x_mask", 0xff));
+        try!(self.command_buffer.program().uniform1ui("tex_x_or", 0));
+        try!(self.command_buffer.program().uniform1ui("tex_y_mask", 0xff));
+        try!(self.command_buffer.program().uniform1ui("tex_y_or", 0));
+
         // We use texture unit 0
         try!(self.command_buffer.program().uniform1i("fb_texture", 0));
 
