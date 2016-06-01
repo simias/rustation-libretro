@@ -34,7 +34,7 @@ impl<'a> ::rustc_serialize::Encoder for Encoder<'a> {
     type Error = Error;
 
     fn emit_nil(&mut self) -> Result<(), Error> {
-        panic!()
+        self.emit_str("nil")
     }
 
     fn emit_usize(&mut self, v: usize) -> Result<(), Error> {
@@ -140,25 +140,34 @@ impl<'a> ::rustc_serialize::Encoder for Encoder<'a> {
         Ok(())
     }
 
-    fn emit_enum<F>(&mut self, _name: &str, _f: F) -> Result<(), Error>
+    fn emit_enum<F>(&mut self, name: &str, f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+        try!(self.emit_str(name));
+
+        f(self)
     }
 
     fn emit_enum_variant<F>(&mut self,
-                            _v_name: &str,
+                            v_name: &str,
                             _v_id: usize,
                             _len: usize,
-                            _f: F) -> Result<(), Error>
+                            f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+
+        // We store the name instead of the ID in order not to end up
+        // with messed up state if an enum gets reordered or something
+        try!(self.emit_str(v_name));
+
+        f(self)
     }
 
     fn emit_enum_variant_arg<F>(&mut self,
-                                _a_idx: usize,
-                                _f: F) -> Result<(), Error>
+                                a_idx: usize,
+                                f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+        try!(self.emit_usize(a_idx));
+
+        f(self)
     }
 
     fn emit_enum_struct_variant<F>(&mut self,
@@ -200,14 +209,16 @@ impl<'a> ::rustc_serialize::Encoder for Encoder<'a> {
         f(self)
     }
 
-    fn emit_tuple<F>(&mut self, _len: usize, _f: F) -> Result<(), Error>
+    fn emit_tuple<F>(&mut self, len: usize, f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+
+        self.emit_seq(len, f)
     }
 
-    fn emit_tuple_arg<F>(&mut self, _idx: usize, _f: F) -> Result<(), Error>
+    fn emit_tuple_arg<F>(&mut self, idx: usize, f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+
+        self.emit_seq_elt(idx, f)
     }
 
     fn emit_tuple_struct<F>(&mut self, _name: &str, _len: usize, _f: F) -> Result<(), Error>
@@ -220,18 +231,22 @@ impl<'a> ::rustc_serialize::Encoder for Encoder<'a> {
         panic!()
     }
 
-    fn emit_option<F>(&mut self, _f: F) -> Result<(), Error>
+    fn emit_option<F>(&mut self, f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+
+        f(self)
     }
 
     fn emit_option_none(&mut self) -> Result<(), Error> {
-        panic!()
+        self.emit_bool(false)
     }
 
-    fn emit_option_some<F>(&mut self, _f: F) -> Result<(), Error>
+    fn emit_option_some<F>(&mut self, f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+
+        try!(self.emit_bool(true));
+
+        f(self)
     }
 
     fn emit_seq<F>(&mut self, len: usize, f: F) -> Result<(), Error>
@@ -313,7 +328,7 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
     type Error = Error;
 
     fn read_nil(&mut self) -> Result<(), Error> {
-        panic!()
+        self.validate_symbol("nil")
     }
 
     fn read_usize(&mut self) -> Result<usize, Error> {
@@ -322,7 +337,18 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
     }
 
     fn read_u64(&mut self) -> Result<u64, Error> {
-        panic!()
+        let mut b = [0; 8];
+
+        try!(self.read_bytes(&mut b));
+
+        let mut v = 0;
+
+        for &b in b.iter().rev() {
+            v <<= 8;
+            v |= b.into();
+        }
+
+        Ok(v)
     }
 
     fn read_u32(&mut self) -> Result<u32, Error> {
@@ -364,11 +390,11 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
     }
 
     fn read_isize(&mut self) -> Result<isize, Error> {
-        panic!()
+        self.read_usize().map(|v| v as isize)
     }
 
     fn read_i64(&mut self) -> Result<i64, Error> {
-        panic!()
+        self.read_u64().map(|v| v as i64)
     }
 
     fn read_i32(&mut self) -> Result<i32, Error> {
@@ -376,15 +402,19 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
     }
 
     fn read_i16(&mut self) -> Result<i16, Error> {
-        panic!()
+        self.read_u16().map(|v| v as i16)
     }
 
     fn read_i8(&mut self) -> Result<i8, Error> {
-        panic!()
+        self.read_u8().map(|v| v as i8)
     }
 
     fn read_bool(&mut self) -> Result<bool, Error> {
-        panic!()
+        match try!(self.read_u8()) {
+            0 => Ok(false),
+            1 => Ok(true),
+            n => Err(Error::BadBool(n)),
+        }
     }
 
     fn read_f64(&mut self) -> Result<f64, Error> {
@@ -396,7 +426,9 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
     }
 
     fn read_char(&mut self) -> Result<char, Error> {
-        panic!()
+        let c = try!(self.read_u32());
+
+        ::std::char::from_u32(c).ok_or(Error::BadChar(c))
     }
 
     fn read_str(&mut self) -> Result<String, Error> {
@@ -416,23 +448,39 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
         String::from_utf8(buf).map_err(|e| Error::BadString(e))
     }
 
-    fn read_enum<T, F>(&mut self, _name: &str, _f: F) -> Result<T, Error>
+    fn read_enum<T, F>(&mut self, name: &str, f: F) -> Result<T, Error>
         where F: FnOnce(&mut Self) -> Result<T, Error> {
-        panic!()
+
+        try!(self.validate_symbol(name));
+
+        f(self)
     }
 
     fn read_enum_variant<T, F>(&mut self,
-                               _names: &[&str],
-                               _f: F) -> Result<T, Error>
+                               names: &[&str],
+                               mut f: F) -> Result<T, Error>
         where F: FnMut(&mut Self, usize) -> Result<T, Error> {
-        panic!()
+
+        let name = try!(self.read_str());
+
+        match names.iter().position(|n| *n == name) {
+            Some(id) => f(self, id),
+            None => Err(Error::BadEnumVariant(name)),
+        }
     }
 
     fn read_enum_variant_arg<T, F>(&mut self,
-                                   _a_idx: usize,
-                                   _f: F) -> Result<T, Error>
+                                   a_idx: usize,
+                                   f: F) -> Result<T, Error>
         where F: FnOnce(&mut Self) -> Result<T, Error> {
-        panic!()
+
+        let id = try!(self.read_usize());
+
+        if id == a_idx {
+            f(self)
+        } else {
+            Err(Error::BadEnumVariantId(a_idx, id))
+        }
     }
 
     fn read_enum_struct_variant<T, F>(&mut self,
@@ -472,14 +520,22 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
         f(self)
     }
 
-    fn read_tuple<T, F>(&mut self, _len: usize, _f: F) -> Result<T, Error>
+    fn read_tuple<T, F>(&mut self, len: usize, f: F) -> Result<T, Error>
         where F: FnOnce(&mut Self) -> Result<T, Error> {
-        panic!()
+
+        self.read_seq(|d, l| {
+            if l == len {
+                f(d)
+            } else {
+                Err(Error::BadTupleLength(len, l))
+            }
+        })
     }
 
-    fn read_tuple_arg<T, F>(&mut self, _a_idx: usize, _f: F) -> Result<T, Error>
+    fn read_tuple_arg<T, F>(&mut self, a_idx: usize, f: F) -> Result<T, Error>
         where F: FnOnce(&mut Self) -> Result<T, Error> {
-        panic!()
+
+        self.read_seq_elt(a_idx, f)
     }
 
     fn read_tuple_struct<T, F>(&mut self, _s_name: &str, _len: usize, _f: F) -> Result<T, Error>
@@ -492,9 +548,12 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
         panic!()
     }
 
-    fn read_option<T, F>(&mut self, _f: F) -> Result<T, Error>
+    fn read_option<T, F>(&mut self, mut f: F) -> Result<T, Error>
         where F: FnMut(&mut Self, bool) -> Result<T, Error> {
-        panic!()
+
+        let is_some = try!(self.read_bool());
+
+        f(self, is_some)
     }
 
     fn read_seq<T, F>(&mut self, f: F) -> Result<T, Error>
@@ -554,6 +613,18 @@ pub enum Error {
     ApplicationError(String),
     /// Attempted to encode or decode an unreasonably large string
     StringTooLong(usize),
+    /// Encountered unknown enum variant while decoding
+    BadEnumVariant(String),
+    /// Encountered an unexpected enum variant argument id while
+    /// decoding: `(expected, got)`
+    BadEnumVariantId(usize, usize),
+    /// Encountered an invalid char while decoding
+    BadChar(u32),
+    /// Encountered an invalid tuple length while decoding:
+    /// `(expected, got)`
+    BadTupleLength(usize, usize),
+    /// Encountered an invalid bool while decoding
+    BadBool(u8),
 }
 
 /// "Magic" string stored in the header to indentify the file format
@@ -568,30 +639,52 @@ pub const STRING_MAX_LEN: usize = 1024 * 1024;
 fn test_serialize_deserialize() {
     use rustc_serialize::{Encodable, Decodable};
 
-    #[derive(RustcDecodable, RustcEncodable, Debug, PartialEq, Eq)]
-    struct S {
-        field1: u32,
+    #[derive(RustcDecodable, RustcEncodable, Debug)]
+    enum Enum {
+        A,
+        B,
+        C,
+    }
+
+    #[derive(RustcDecodable, RustcEncodable, Debug)]
+    enum EnumArgs {
+        X(u32),
+        Y(String, u8),
+        Z(Vec<char>, Enum, i16),
+    }
+
+    #[derive(RustcDecodable, RustcEncodable, Debug)]
+    struct Struct {
+        field: u32,
         field2: i32,
     }
 
     // Automatically generate `RustcDecodable` and `RustcEncodable` trait
     // implementations
-    #[derive(RustcDecodable, RustcEncodable, Debug, PartialEq, Eq)]
+    #[derive(RustcDecodable, RustcEncodable, Debug)]
     struct TestStruct  {
         data_int: u8,
-        data_string: String,
+        data_str: String,
         data_vector: Vec<u16>,
-        s: S,
+        data_struct: Struct,
+        data_enum: Enum,
+        data_enum_args: EnumArgs,
+        data_tuple: (u64, char, bool),
+        data_option: Option<i64>,
     }
 
     let object = TestStruct {
         data_int: 1,
-        data_string: "foo".to_string(),
+        data_str: "homura".to_string(),
         data_vector: vec![2,3,4,5],
-        s: S {
-            field1: 0x42,
+        data_struct: Struct {
+            field: 0x42,
             field2: -1,
         },
+        data_enum: Enum::B,
+        data_enum_args: EnumArgs::Z(vec!['@'; 10], Enum::C, -3),
+        data_tuple: (1234, '!', true),
+        data_option: Some(-4335),
     };
 
     {
@@ -607,9 +700,8 @@ fn test_serialize_deserialize() {
 
         let mut d = Decoder::new(&mut save).unwrap();
 
-        let decoded: TestStruct = Decodable::decode(&mut d).unwrap();
+        let out: TestStruct = Decodable::decode(&mut d).unwrap();
 
-        assert!(decoded == object)
+        println!("{:?}", out);
     }
-
 }

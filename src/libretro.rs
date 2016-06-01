@@ -31,6 +31,8 @@ pub trait Context {
     fn gl_context_reset(&mut self);
     /// The OpenGL context is about to be destroyed
     fn gl_context_destroy(&mut self);
+    /// Return the maximum size of a save state in bytes
+    fn serialize_size(&self) -> usize;
 }
 
 /// Global context instance holding our emulator state. Libretro 1
@@ -778,7 +780,7 @@ pub unsafe extern "C" fn retro_run() {
 
 #[no_mangle]
 pub extern "C" fn retro_serialize_size() -> size_t {
-    0
+    context().serialize_size()
 }
 
 #[no_mangle]
@@ -920,6 +922,10 @@ pub mod dummy {
 
         fn gl_context_destroy(&mut self) {
             panic!("Called context_destroy with no context!");
+        }
+
+        fn serialize_size(&self) -> usize {
+            panic!("Called serialize_size with no context!");
         }
     }
 }

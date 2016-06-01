@@ -13,6 +13,8 @@ use std::str::FromStr;
 
 use libc::{c_char, c_uint};
 
+use rustc_serialize::Encodable;
+
 use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
 use rustation::gpu::{Gpu, VideoClock};
@@ -357,6 +359,45 @@ impl libretro::Context for Context {
 
     fn gl_context_destroy(&mut self) {
         self.retrogl.context_destroy();
+    }
+
+    fn serialize_size(&self) -> usize {
+        // In order to get the full size we're just going to use a
+        // dummy Write struct which will just count how many bytes are
+        // being written
+        struct WriteCounter(usize);
+
+        impl ::std::io::Write for WriteCounter {
+            fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
+                let len = buf.len();
+
+                self.0 += len;
+
+                Ok(len)
+            }
+
+            fn flush(&mut self) -> ::std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut counter = WriteCounter(0);
+
+        match savestate::Encoder::new(&mut counter) {
+            Ok(mut encoder) => {
+                if let Err(e) = self.cpu.encode(&mut encoder) {
+                    warn!("Couldn't serialize emulator state: {:?}", e);
+                    return 0;
+                }
+            }
+            Err(e) => {
+                warn!("Couldn't create savestate encoder: {:?}", e);
+                return 0;
+            }
+        };
+
+        // Return the length
+        counter.0
     }
 }
 
