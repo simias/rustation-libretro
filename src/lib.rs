@@ -13,7 +13,7 @@ use std::str::FromStr;
 
 use libc::{c_char, c_uint};
 
-use rustc_serialize::Encodable;
+use rustc_serialize::{Encodable, Encoder};
 
 use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
@@ -64,6 +64,8 @@ struct Context {
     /// Internal display coordinates in VRAM at the end of the
     /// previous frame. Used for internal FPS calculations.
     prev_display_start: (u16, u16),
+    /// Cached value for the maximum savestate size in bytes
+    savestate_max_len: usize,
 }
 
 impl Context {
@@ -73,18 +75,97 @@ impl Context {
         let shared_state = SharedState::new();
         let retrogl = try!(retrogl::RetroGl::new(video_clock));
 
-        Ok(Context {
-            retrogl: retrogl,
-            cpu: cpu,
-            shared_state: shared_state,
-            debugger: Debugger::new(),
-            disc_path: disc.to_path_buf(),
-            video_clock: video_clock,
-            frame_count: 0,
-            monitor_internal_fps: CoreVariables::display_internal_fps(),
-            internal_frame_count: 0,
-            prev_display_start: (0, 0),
-        })
+        let mut context =
+            Context {
+                retrogl: retrogl,
+                cpu: cpu,
+                shared_state: shared_state,
+                debugger: Debugger::new(),
+                disc_path: disc.to_path_buf(),
+                video_clock: video_clock,
+                frame_count: 0,
+                monitor_internal_fps: CoreVariables::display_internal_fps(),
+                internal_frame_count: 0,
+                prev_display_start: (0, 0),
+                savestate_max_len: 0,
+            };
+
+        let max_len = try!(context.compute_savestate_max_length());
+
+        context.savestate_max_len = max_len;
+
+        Ok(context)
+    }
+
+    fn compute_savestate_max_length(&mut self) -> Result<usize, ()> {
+        // In order to get the full size we're just going to use a
+        // dummy Write struct which will just count how many bytes are
+        // being written
+        struct WriteCounter(usize);
+
+        impl ::std::io::Write for WriteCounter {
+            fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
+                let len = buf.len();
+
+                self.0 += len;
+
+                Ok(len)
+            }
+
+            fn flush(&mut self) -> ::std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut counter = WriteCounter(0);
+
+        try!(self.save_state(&mut counter));
+
+        let len = counter.0;
+
+        // Our savestate format has variable length, in particular we
+        // have the GPU's load_buffer which can grow to 1MB in the
+        // worst case scenario (the entire VRAM). I'm going to be
+        // optimistic here and give us 512KB of "headroom", that
+        // should be enough 99% of the time, hopefully.
+        let len = len + 512 * 1024;
+
+        Ok(len)
+    }
+
+    fn save_state(&self, writer: &mut ::std::io::Write) -> Result<(), ()> {
+
+        let mut encoder =
+            match savestate::Encoder::new(writer) {
+                Ok(encoder) => encoder,
+                Err(e) => {
+                    warn!("Couldn't create savestate encoder: {:?}", e);
+                    return Err(())
+                }
+            };
+
+        match self.encode(&mut encoder) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                warn!("Couldn't serialize emulator state: {:?}", e);
+                Err(())
+            }
+        }
+    }
+
+    fn load_state(&self, reader: &mut ::std::io::Read) -> Result<(), ()> {
+        let mut decoder =
+            match savestate::Decoder::new(reader) {
+                Ok(decoder) => decoder,
+                Err(e) => {
+                    warn!("Couldn't create savestate decoder: {:?}", e);
+                    return Err(())
+                }
+            };
+
+        // XXX load context
+
+        Err(())
     }
 
     fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
@@ -362,42 +443,30 @@ impl libretro::Context for Context {
     }
 
     fn serialize_size(&self) -> usize {
-        // In order to get the full size we're just going to use a
-        // dummy Write struct which will just count how many bytes are
-        // being written
-        struct WriteCounter(usize);
+        self.savestate_max_len
+    }
 
-        impl ::std::io::Write for WriteCounter {
-            fn write(&mut self, buf: &[u8]) -> ::std::io::Result<usize> {
-                let len = buf.len();
+    fn serialize(&self, mut buf: &mut [u8]) -> Result<(), ()> {
+        self.save_state(&mut buf)
+    }
 
-                self.0 += len;
+    fn unserialize(&self, mut buf: &[u8]) -> Result<(), ()> {
+        self.load_state(&mut buf)
+    }
+}
 
-                Ok(len)
-            }
+impl Encodable for Context {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_struct("Context", 3, |s| {
+            try!(s.emit_struct_field("cpu", 0,
+                                     |s| self.cpu.encode(s)));
+            try!(s.emit_struct_field("retrogl", 1,
+                                     |s| self.retrogl.encode(s)));
+            try!(s.emit_struct_field("video_clock", 2,
+                                     |s| self.video_clock.encode(s)));
 
-            fn flush(&mut self) -> ::std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let mut counter = WriteCounter(0);
-
-        match savestate::Encoder::new(&mut counter) {
-            Ok(mut encoder) => {
-                if let Err(e) = self.cpu.encode(&mut encoder) {
-                    warn!("Couldn't serialize emulator state: {:?}", e);
-                    return 0;
-                }
-            }
-            Err(e) => {
-                warn!("Couldn't create savestate encoder: {:?}", e);
-                return 0;
-            }
-        };
-
-        // Return the length
-        counter.0
+            Ok(())
+        })
     }
 }
 

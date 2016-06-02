@@ -22,7 +22,7 @@ impl<'a> Encoder<'a> {
     }
 
     fn write_bytes(&mut self, b: &[u8]) -> Result<(), Error> {
-        match self.writer.write(b) {
+        match self.writer.write_all(b) {
             Ok(_) => Ok(()),
             Err(e) => Err(Error::IoError(e)),
         }

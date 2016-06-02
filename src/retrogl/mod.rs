@@ -1,11 +1,15 @@
 //! PlayStation OpenGL 3.3 renderer playing nice with libretro
 
-use libretro;
+use rustc_serialize::{Encodable, Encoder};
+
 use gl;
+
 use rustation::gpu::VideoClock;
 use rustation::gpu::renderer::Renderer;
 use rustation::gpu::{VRAM_WIDTH_PIXELS, VRAM_HEIGHT};
 use CoreVariables;
+
+use libretro;
 
 use renderer::GlRenderer;
 
@@ -144,6 +148,25 @@ impl RetroGl {
     }
 }
 
+impl Encodable for RetroGl {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        s.emit_struct("RetroGL", 2, |s| {
+            let draw_config =
+                match self.state {
+                    GlState::Valid(ref r) => r.draw_config(),
+                    GlState::Invalid(ref d) => d,
+                };
+
+            try!(s.emit_struct_field("draw_config", 0,
+                                     |s| draw_config.encode(s)));
+            try!(s.emit_struct_field("video_clock", 1,
+                                     |s| self.video_clock.encode(s)));
+
+            Ok(())
+        })
+    }
+}
+
 /// State machine dealing with OpenGL context
 /// destruction/reconstruction
 enum GlState {
@@ -153,7 +176,7 @@ enum GlState {
     Invalid(DrawConfig),
 }
 
-#[derive(Clone)]
+#[derive(RustcEncodable, RustcDecodable, Clone)]
 pub struct DrawConfig {
     pub display_top_left: (u16, u16),
     pub display_resolution: (u16, u16),
