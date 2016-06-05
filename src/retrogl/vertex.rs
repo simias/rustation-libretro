@@ -31,7 +31,7 @@ impl VertexArrayObject {
 impl Drop for VertexArrayObject {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteBuffers(1, &self.id);
+            gl::DeleteVertexArrays(1, &self.id);
         }
     }
 }
