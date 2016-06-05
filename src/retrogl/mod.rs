@@ -1,6 +1,6 @@
 //! PlayStation OpenGL 3.3 renderer playing nice with libretro
 
-use rustc_serialize::{Encodable, Encoder};
+use rustc_serialize::{Encodable, Encoder, Decodable, Decoder};
 
 use gl;
 
@@ -146,11 +146,19 @@ impl RetroGl {
             }
         }
     }
+
+    /// Return true if we're holding a valid GL context
+    pub fn is_valid(&self) -> bool {
+        match self.state {
+            GlState::Valid(_) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Encodable for RetroGl {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_struct("RetroGL", 2, |s| {
+        s.emit_struct("RetroGl", 2, |s| {
             let draw_config =
                 match self.state {
                     GlState::Valid(ref r) => r.draw_config(),
@@ -163,6 +171,22 @@ impl Encodable for RetroGl {
                                      |s| self.video_clock.encode(s)));
 
             Ok(())
+        })
+    }
+}
+
+impl Decodable for RetroGl {
+    fn decode<D: Decoder>(d: &mut D) -> Result<RetroGl, D::Error> {
+        d.read_struct("RetroGl", 2, |d| {
+            let draw_config = try!(d.read_struct_field("draw_config", 0,
+                                                       Decodable::decode));
+            let video_clock = try!(d.read_struct_field("video_clock", 1,
+                                                       Decodable::decode));
+
+            Ok(RetroGl{
+                state: GlState::Invalid(draw_config),
+                video_clock: video_clock,
+            })
         })
     }
 }

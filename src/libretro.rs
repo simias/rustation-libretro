@@ -36,7 +36,7 @@ pub trait Context {
     /// Serialize the savestate in the provided buffer
     fn serialize(&self, &mut [u8]) -> Result<(), ()>;
     /// Deserialize the savestate from the provided buffer
-    fn unserialize(&self, &[u8]) -> Result<(), ()>;
+    fn unserialize(&mut self, &[u8]) -> Result<(), ()>;
 }
 
 /// Global context instance holding our emulator state. Libretro 1
@@ -951,7 +951,7 @@ pub mod dummy {
             panic!("Called serialize with no context!");
         }
 
-        fn unserialize(&self, _: &[u8]) -> Result<(), ()> {
+        fn unserialize(&mut self, _: &[u8]) -> Result<(), ()> {
             panic!("Called unserialize with no context!");
         }
     }

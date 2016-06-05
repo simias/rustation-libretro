@@ -13,7 +13,7 @@ use std::str::FromStr;
 
 use libc::{c_char, c_uint};
 
-use rustc_serialize::{Encodable, Encoder};
+use rustc_serialize::{Encodable, Encoder, Decodable, Decoder};
 
 use rustation::cdrom::disc::{Disc, Region};
 use rustation::bios::{Bios, BIOS_SIZE};
@@ -153,7 +153,7 @@ impl Context {
         }
     }
 
-    fn load_state(&self, reader: &mut ::std::io::Read) -> Result<(), ()> {
+    fn load_state(&mut self, reader: &mut ::std::io::Read) -> Result<(), ()> {
         let mut decoder =
             match savestate::Decoder::new(reader) {
                 Ok(decoder) => decoder,
@@ -163,9 +163,60 @@ impl Context {
                 }
             };
 
-        // XXX load context
+        // I don't implement Decodable for Context itself because I
+        // don't want to create a brand new instance. Things like the
+        // debugger or disc path don't need to be reset
 
-        Err(())
+        let decoded =
+            decoder.read_struct("Context", 4, |d| {
+                let cpu = try!(d.read_struct_field("cpu", 0,
+                                                   Decodable::decode));
+
+                let retrogl = try!(d.read_struct_field("retrogl", 1,
+                                                       Decodable::decode));
+
+                let video_clock = try!(d.read_struct_field("video_clock", 2,
+                                                           Decodable::decode));
+
+                let shared_state = try!(d.read_struct_field("shared_state", 3,
+                                                            Decodable::decode));
+
+                Ok((cpu, retrogl, video_clock, shared_state))
+            });
+
+        let (cpu, retrogl, video_clock, shared_state) =
+            match decoded {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!("Couldn't decode savestate: {:?}", e);
+                    return Err(())
+                }
+            };
+
+        let gl_is_valid = self.retrogl.is_valid();
+
+        // Save the disc before we replace everything
+        let disc = self.cpu.interconnect_mut().cdrom_mut().remove_disc();
+
+        self.cpu = cpu;
+        self.retrogl = retrogl;
+        self.video_clock = video_clock;
+        self.shared_state = shared_state;
+
+        self.cpu.interconnect_mut().cdrom_mut().set_disc(disc);
+
+        // XXX TODO: reload BIOS and controllers
+
+        // If we had a valid GL context before the load we can
+        // directly reload everything. Otherwise it'll be done when
+        // the frontend calls context_reset
+        if gl_is_valid {
+            self.retrogl.context_reset();
+        }
+
+        info!("Savestate load successful");
+
+        Ok(())
     }
 
     fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
@@ -450,20 +501,22 @@ impl libretro::Context for Context {
         self.save_state(&mut buf)
     }
 
-    fn unserialize(&self, mut buf: &[u8]) -> Result<(), ()> {
+    fn unserialize(&mut self, mut buf: &[u8]) -> Result<(), ()> {
         self.load_state(&mut buf)
     }
 }
 
 impl Encodable for Context {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_struct("Context", 3, |s| {
+        s.emit_struct("Context", 4, |s| {
             try!(s.emit_struct_field("cpu", 0,
                                      |s| self.cpu.encode(s)));
             try!(s.emit_struct_field("retrogl", 1,
                                      |s| self.retrogl.encode(s)));
             try!(s.emit_struct_field("video_clock", 2,
                                      |s| self.video_clock.encode(s)));
+            try!(s.emit_struct_field("shared_state", 3,
+                                     |s| self.shared_state.encode(s)));
 
             Ok(())
         })
