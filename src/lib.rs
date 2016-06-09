@@ -53,20 +53,12 @@ struct Context {
     debugger: Debugger,
     disc_path: PathBuf,
     video_clock: VideoClock,
-    /// Number of frames output by the emulator (i.e. number of times
-    /// `render_frame` has been called)
-    frame_count: u32,
     /// When true the internal FPS monitoring in enabled
     monitor_internal_fps: bool,
-    /// Number of frames we guessed the game rendered internally when
-    /// `monitor_internal_fps` is true. This counter is reset every
-    /// `INTERNAL_FPS_SAMPLE_PERIOD`.
-    internal_frame_count: u32,
-    /// Internal display coordinates in VRAM at the end of the
-    /// previous frame. Used for internal FPS calculations.
-    prev_display_start: (u16, u16),
     /// Cached value for the maximum savestate size in bytes
     savestate_max_len: usize,
+    /// If true we log the counters at the end of each frame
+    log_frame_counters: bool,
 }
 
 impl Context {
@@ -84,11 +76,9 @@ impl Context {
                 debugger: Debugger::new(),
                 disc_path: disc.to_path_buf(),
                 video_clock: video_clock,
-                frame_count: 0,
                 monitor_internal_fps: CoreVariables::display_internal_fps(),
-                internal_frame_count: 0,
-                prev_display_start: (0, 0),
                 savestate_max_len: 0,
+                log_frame_counters: CoreVariables::log_frame_counters(),
             };
 
         let max_len = try!(context.compute_savestate_max_length());
@@ -450,9 +440,6 @@ impl Context {
 impl libretro::Context for Context {
 
     fn render_frame(&mut self) {
-
-        self.frame_count += 1;
-
         self.poll_controllers();
 
         let cpu = &mut self.cpu;
@@ -468,31 +455,39 @@ impl libretro::Context for Context {
             cpu.run_until_next_frame(debugger, shared_state, renderer);
         });
 
+        let counters = shared_state.counters_mut();
+
+        if self.log_frame_counters {
+            debug!("Frame counters:");
+            debug!("    CPU interrupt count: {}", counters.cpu_interrupt.get());
+        }
+
+        counters.cpu_interrupt.reset();
+
         if self.monitor_internal_fps {
-            // In order to compute the internal game framerate we
-            // monitor whether the display coordinates have
-            // changed. Since most games use double buffering that
-            // should effectively give us the internal framerate.
-            let display_start = cpu.interconnect().gpu().display_vram_start();
+            let frame_count = counters.frame.get();
 
-            if display_start != self.prev_display_start {
-                self.prev_display_start = display_start;
-                self.internal_frame_count += 1;
-            }
-
-            if self.frame_count % INTERNAL_FPS_SAMPLE_PERIOD == 0 {
+            if frame_count >= INTERNAL_FPS_SAMPLE_PERIOD {
                 // We compute the internal FPS relative to the
                 // full-speed video output FPS.
                 let video_fps = video_output_framerate(self.video_clock);
 
+                let internal_frame_count = counters.framebuffer_swap.get();
+
                 let internal_fps =
-                    (self.internal_frame_count as f32 * video_fps)
+                    (internal_frame_count as f32 * video_fps)
                     / INTERNAL_FPS_SAMPLE_PERIOD as f32;
 
                 libretro_message!(100, "Internal FPS: {:.2}", internal_fps);
 
-                self.internal_frame_count = 0;
+                counters.frame.reset();
+                counters.framebuffer_swap.reset();
             }
+        } else {
+            // Keep those counters to 0 so that we don't get wild
+            // values if logging is enabled.
+            counters.frame.reset();
+            counters.framebuffer_swap.reset();
         }
     }
 
@@ -504,6 +499,7 @@ impl libretro::Context for Context {
 
     fn refresh_variables(&mut self) {
         self.monitor_internal_fps = CoreVariables::display_internal_fps();
+        self.log_frame_counters = CoreVariables::log_frame_counters();
 
         self.retrogl.refresh_variables();
     }
@@ -586,7 +582,9 @@ libretro_variables!(
         bios_menu: bool, parse_bool
             => "Boot to BIOS menu; disabled|enabled",
         display_internal_fps: bool, parse_bool
-            => "Display internal FPS; disabled|enabled"
+            => "Display internal FPS; disabled|enabled",
+        log_frame_counters: bool, parse_bool
+            => "Log frame counters; disabled|enabled",
     });
 
 fn parse_upscale(opt: &str) -> Result<u32, <u32 as FromStr>::Err> {

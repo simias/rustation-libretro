@@ -263,9 +263,12 @@ impl<'a> ::rustc_serialize::Encoder for Encoder<'a> {
         f(self)
     }
 
-    fn emit_map<F>(&mut self, _len: usize, _f: F) -> Result<(), Error>
+    fn emit_map<F>(&mut self, len: usize, f: F) -> Result<(), Error>
         where F: FnOnce(&mut Self) -> Result<(), Error> {
-        panic!()
+
+        try!(self.emit_usize(len));
+
+        f(self)
     }
 
     fn emit_map_elt_key<F>(&mut self, _idx: usize, _f: F) -> Result<(), Error>
