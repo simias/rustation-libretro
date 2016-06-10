@@ -277,7 +277,11 @@ impl Context {
                 }
             };
 
-        if CoreVariables::skip_bios_animation() {
+        let bios_menu = CoreVariables::bios_menu();
+
+        // Skipping BIOS animations seems to break the BIOS menu, so
+        // we ignore this setting when the menu is requested.
+        if CoreVariables::skip_bios_animation() && !bios_menu {
             match bios.patch_boot_animation() {
                 Ok(_) => info!("Patched BIOS to skip boot animation"),
                 Err(_) => warn!("Failed to patch BIOS to skip boot animations"),
@@ -294,7 +298,7 @@ impl Context {
         // If we're asked to boot straight to the BIOS menu we pretend
         // no disc is present.
         let disc =
-            if CoreVariables::bios_menu() {
+            if bios_menu {
                 None
             } else {
                 Some(disc)
