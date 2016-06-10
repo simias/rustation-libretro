@@ -268,7 +268,7 @@ impl Context {
 
         info!("Detected disc region: {:?}", region);
 
-        let bios =
+        let mut bios =
             match Context::find_bios(|md| { md.region == region }) {
                 Some(b) => b,
                 None => {
@@ -276,6 +276,13 @@ impl Context {
                     return Err(());
                 }
             };
+
+        if CoreVariables::skip_bios_animation() {
+            match bios.patch_boot_animation() {
+                Ok(_) => info!("Patched BIOS to skip boot animation"),
+                Err(_) => warn!("Failed to patch BIOS to skip boot animations"),
+            }
+        }
 
         let video_clock =
             match region {
@@ -581,6 +588,8 @@ libretro_variables!(
             => "Wireframe mode; disabled|enabled",
         bios_menu: bool, parse_bool
             => "Boot to BIOS menu; disabled|enabled",
+        skip_bios_animation: bool, parse_bool
+            => "Skip BIOS boot animations; disabled|enabled",
         display_internal_fps: bool, parse_bool
             => "Display internal FPS; disabled|enabled",
         log_frame_counters: bool, parse_bool
