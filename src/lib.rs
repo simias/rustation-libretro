@@ -24,6 +24,7 @@ use rustation::cpu::Cpu;
 use rustation::padmemcard::gamepad::{Button, ButtonState, DigitalProfile};
 use rustation::shared::SharedState;
 use rustation::debugger::Debugger;
+use rustation::parallel_io::exe_loader;
 
 use cdimage::cue::Cue;
 
@@ -40,7 +41,7 @@ extern crate rustc_serialize;
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
     library_name: cstring!("Rustation"),
     library_version: rustation::VERSION_CSTR as *const _ as *const c_char,
-    valid_extensions: cstring!("cue"),
+    valid_extensions: cstring!("cue|exe|psexe|psx"),
     need_fullpath: false,
     block_extract: false,
 };
@@ -59,12 +60,25 @@ struct Context {
     savestate_max_len: usize,
     /// If true we log the counters at the end of each frame
     log_frame_counters: bool,
+    /// If true we trigger the debugger when Pause/Break is pressed
+    debug_on_key: bool,
 }
 
 impl Context {
     fn new(disc: &Path) -> Result<Context, ()> {
 
-        let (cpu, video_clock) = try!(Context::load_disc(disc));
+        let (cpu, video_clock) =
+            match exe_loader::ExeLoader::load_file(disc) {
+                Ok(l) => try!(Context::load_exe(l)),
+                // Not an EXE, load as a disc
+                Err(exe_loader::Error::UnknownFormat) =>
+                    try!(Context::load_disc(disc)),
+                Err(e) => {
+                    error!("Couldn't load EXE file: {:?}", e);
+                    return Err(())
+                }
+            };
+
         let shared_state = SharedState::new();
         let retrogl = try!(retrogl::RetroGl::new(video_clock));
 
@@ -76,10 +90,13 @@ impl Context {
                 debugger: Debugger::new(),
                 disc_path: disc.to_path_buf(),
                 video_clock: video_clock,
-                monitor_internal_fps: CoreVariables::display_internal_fps(),
+                monitor_internal_fps: false,
                 savestate_max_len: 0,
-                log_frame_counters: CoreVariables::log_frame_counters(),
+                log_frame_counters: false,
+                debug_on_key: false,
             };
+
+        libretro::Context::refresh_variables(&mut context);
 
         let max_len = try!(context.compute_savestate_max_length());
 
@@ -245,7 +262,59 @@ impl Context {
         Ok(())
     }
 
+    fn load_exe(loader: exe_loader::ExeLoader) -> Result<(Cpu, VideoClock), ()> {
+        let region =
+            match loader.region() {
+                Some(r) => {
+                    info!("Detected EXE region: {:?}", r);
+                    r
+                }
+                None => {
+                    warn!("Couldn't establish EXE file region, \
+                           defaulting to NorthAmerica");
+                    Region::NorthAmerica
+                }
+            };
+
+        // In order for the EXE loader to word correctly without any
+        // disc we need to patch the BIOS, so let's make sure that the
+        // animation_jump_hook is available
+        let bios_predicate = |md: &Metadata| {
+            md.region == region && md.animation_jump_hook.is_some()
+        };
+
+        let mut bios =
+            match Context::find_bios(bios_predicate) {
+                Some(b) => b,
+                None => {
+                    error!("Couldn't find a BIOS, bailing out");
+                    return Err(());
+                }
+            };
+
+        if let Err(_) = loader.patch_bios(&mut bios) {
+             error!("EXE loader couldn't patch the BIOS, giving up");
+             return Err(());
+        }
+
+        let video_clock =
+            match region {
+                Region::Europe => VideoClock::Pal,
+                Region::NorthAmerica => VideoClock::Ntsc,
+                Region::Japan => VideoClock::Ntsc,
+            };
+
+        let gpu = Gpu::new(video_clock);
+        let mut inter = Interconnect::new(bios, gpu, None);
+
+        // Plug the EXE loader in the Parallel I/O port
+        inter.parallel_io_mut().set_module(Box::new(loader));
+
+        Ok((Cpu::new(inter), video_clock))
+    }
+
     fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
+
         let image =
             match Cue::new(disc) {
                 Ok(c) => c,
@@ -457,8 +526,11 @@ impl libretro::Context for Context {
         let shared_state = &mut self.shared_state;
         let debugger = &mut self.debugger;
 
-        if libretro::key_pressed(0, libretro::Key::Pause) {
-            // Trigger the debugger
+        let debug_request =
+            self.debug_on_key &&
+            libretro::key_pressed(0, libretro::Key::Pause);
+
+        if debug_request {
             debugger.trigger_break();
         }
 
@@ -511,6 +583,8 @@ impl libretro::Context for Context {
     fn refresh_variables(&mut self) {
         self.monitor_internal_fps = CoreVariables::display_internal_fps();
         self.log_frame_counters = CoreVariables::log_frame_counters();
+        self.debug_on_key = CoreVariables::debug_on_key();
+        self.cpu.set_debug_on_break(CoreVariables::debug_on_break());
 
         self.retrogl.refresh_variables();
     }
@@ -598,6 +672,10 @@ libretro_variables!(
             => "Display internal FPS; disabled|enabled",
         log_frame_counters: bool, parse_bool
             => "Log frame counters; disabled|enabled",
+        debug_on_break: bool, parse_bool
+            => "Trigger debugger on BREAK instructions; disabled|enabled",
+        debug_on_key: bool, parse_bool
+            => "Trigger debugger when Pause/Break is pressed; disabled|enabled",
     });
 
 fn parse_upscale(opt: &str) -> Result<u32, <u32 as FromStr>::Err> {
