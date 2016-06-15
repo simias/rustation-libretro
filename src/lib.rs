@@ -5,6 +5,7 @@ mod retrogl;
 mod retrolog;
 mod renderer;
 mod savestate;
+mod debugger;
 
 use std::path::{Path, PathBuf};
 use std::fs::File;
@@ -23,10 +24,11 @@ use rustation::memory::Interconnect;
 use rustation::cpu::Cpu;
 use rustation::padmemcard::gamepad::{Button, ButtonState, DigitalProfile};
 use rustation::shared::SharedState;
-use rustation::debugger::Debugger;
 use rustation::parallel_io::exe_loader;
 
 use cdimage::cue::Cue;
+
+use debugger::Debugger;
 
 #[macro_use]
 extern crate log;
@@ -531,7 +533,7 @@ impl libretro::Context for Context {
             libretro::key_pressed(0, libretro::Key::Pause);
 
         if debug_request {
-            debugger.trigger_break();
+            rustation::debugger::Debugger::trigger_break(debugger);
         }
 
         self.retrogl.render_frame(|renderer| {
