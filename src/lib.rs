@@ -69,7 +69,7 @@ struct Context {
 impl Context {
     fn new(disc: &Path) -> Result<Context, ()> {
 
-        let (cpu, video_clock) =
+        let (mut cpu, video_clock) =
             match exe_loader::ExeLoader::load_file(disc) {
                 Ok(l) => try!(Context::load_exe(l)),
                 // Not an EXE, load as a disc
@@ -83,6 +83,16 @@ impl Context {
 
         let shared_state = SharedState::new();
         let retrogl = try!(retrogl::RetroGl::new(video_clock));
+
+        if CoreVariables::enable_debug_uart() {
+            let result =
+                cpu.interconnect_mut().bios_mut().enable_debug_uart();
+
+            match result {
+                Ok(_) => info!("BIOS patched to enable debug UART"),
+                Err(_) => warn!("Couldn't patch BIOS to enable debug UART"),
+            }
+        }
 
         let mut context =
             Context {
@@ -105,6 +115,10 @@ impl Context {
         context.savestate_max_len = max_len;
 
         context.setup_controllers();
+
+        if CoreVariables::debug_on_reset() {
+            context.trigger_break();
+        }
 
         Ok(context)
     }
@@ -335,8 +349,10 @@ impl Context {
                 }
             };
 
+        let serial = disc.serial_number();
         let region = disc.region();
 
+        info!("Disc serial number: {}", serial);
         info!("Detected disc region: {:?}", region);
 
         let mut bios =
@@ -517,6 +533,11 @@ impl Context {
             pad.set_button_state(psxbutton, state);
         }
     }
+
+    /// Trigger a breakpoint in the debugger
+    fn trigger_break(&mut self) {
+        rustation::debugger::Debugger::trigger_break(&mut self.debugger);
+    }
 }
 
 impl libretro::Context for Context {
@@ -524,17 +545,17 @@ impl libretro::Context for Context {
     fn render_frame(&mut self) {
         self.poll_controllers();
 
-        let cpu = &mut self.cpu;
-        let shared_state = &mut self.shared_state;
-        let debugger = &mut self.debugger;
-
         let debug_request =
             self.debug_on_key &&
             libretro::key_pressed(0, libretro::Key::Pause);
 
         if debug_request {
-            rustation::debugger::Debugger::trigger_break(debugger);
+            self.trigger_break();
         }
+
+        let cpu = &mut self.cpu;
+        let shared_state = &mut self.shared_state;
+        let debugger = &mut self.debugger;
 
         self.retrogl.render_frame(|renderer| {
             cpu.run_until_next_frame(debugger, shared_state, renderer);
@@ -598,6 +619,10 @@ impl libretro::Context for Context {
                 self.cpu = cpu;
                 self.video_clock = video_clock;
                 self.shared_state = SharedState::new();
+
+                if CoreVariables::debug_on_reset() {
+                    self.trigger_break();
+                }
             },
             Err(_) => warn!("Couldn't reset game"),
         }
@@ -674,10 +699,15 @@ libretro_variables!(
             => "Display internal FPS; disabled|enabled",
         log_frame_counters: bool, parse_bool
             => "Log frame counters; disabled|enabled",
+        enable_debug_uart: bool, parse_bool
+            => "Enable debug UART in the BIOS; disabled|enabled",
         debug_on_break: bool, parse_bool
             => "Trigger debugger on BREAK instructions; disabled|enabled",
         debug_on_key: bool, parse_bool
             => "Trigger debugger when Pause/Break is pressed; disabled|enabled",
+        debug_on_reset: bool, parse_bool
+            => "Trigger debugger when starting or resetting the emulator; \
+                disabled|enabled",
     });
 
 fn parse_upscale(opt: &str) -> Result<u32, <u32 as FromStr>::Err> {
