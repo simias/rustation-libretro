@@ -1,3 +1,9 @@
+// XXX temporarily necessary to remove annoying warnings about the
+// cstring! macro in rustc 1.10.0 which don't have a simple
+// workaround. Will be removed once we find a better way to silence
+// them.
+#![allow(const_err)]
+
 #[macro_use]
 pub mod libretro;
 #[macro_use]

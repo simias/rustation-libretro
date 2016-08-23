@@ -39,9 +39,15 @@ pub trait Context {
     fn unserialize(&mut self, &[u8]) -> Result<(), ()>;
 }
 
-/// Global context instance holding our emulator state. Libretro 1
-/// doesn't support multi-instancing
-static mut static_context: *mut Context = &mut dummy::Context;
+/// Global context instance holding our emulator state. Libretro
+/// doesn't support multi-instancing.
+///
+/// The weird cast is here to make rustc happy with the mutable static
+/// pointer. It's a valid cast because `dummy::Context` is 0-sized so
+/// the pointer doesn't actually point to anything and is never
+/// dereferenced. It cannot be 0 however, since that would be a NULL
+/// pointer.
+static mut static_context: *mut Context = 1 as *mut dummy::Context;
 
 unsafe fn set_context(context: Box<Context>) {
     static_context = Box::into_raw(context);
