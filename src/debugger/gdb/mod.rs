@@ -268,7 +268,9 @@ impl GdbRemote {
 
     /// Read a region of memory. The packet format should be
     /// `ADDR,LEN`, both in hexadecimal
-    fn read_memory(&mut self, cpu: &mut Cpu, args: &[u8]) -> GdbResult {
+    fn read_memory(&mut self,
+                   cpu: &mut Cpu,
+                   args: &[u8]) -> GdbResult {
 
         let mut reply = Reply::new();
 

@@ -12,6 +12,7 @@ mod retrolog;
 mod renderer;
 mod savestate;
 mod debugger;
+mod vcd;
 
 use std::path::{Path, PathBuf};
 use std::fs::File;
@@ -31,6 +32,7 @@ use rustation::cpu::Cpu;
 use rustation::padmemcard::gamepad::{Button, ButtonState, DigitalProfile};
 use rustation::shared::SharedState;
 use rustation::parallel_io::exe_loader;
+use rustation::tracer;
 
 use cdimage::cue::Cue;
 
@@ -44,6 +46,7 @@ extern crate rustation;
 extern crate arrayvec;
 extern crate cdimage;
 extern crate rustc_serialize;
+extern crate time;
 
 /// Static system information sent to the frontend on request
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
@@ -284,7 +287,8 @@ impl Context {
         Ok(())
     }
 
-    fn load_exe(loader: exe_loader::ExeLoader) -> Result<(Cpu, VideoClock), ()> {
+    fn load_exe(loader: exe_loader::ExeLoader)
+                -> Result<(Cpu, VideoClock), ()> {
         let region =
             match loader.region() {
                 Some(r) => {
@@ -546,6 +550,32 @@ impl Context {
     }
 }
 
+impl Drop for Context {
+    fn drop(&mut self) {
+        if cfg!(feature = "trace") {
+            // Dump the trace before destroying everything
+            let path = VCD_TRACE_PATH;
+
+            let trace = tracer::remove_trace();
+
+            if trace.is_empty() {
+                warn!("Empty trace, ignoring");
+            } else {
+                info!("Dumping VCD trace file to {}", path);
+
+                let mut vcd_file = File::create(path).unwrap();
+
+                let content = &*self.disc_path.to_string_lossy();
+
+                let bios_md = self.cpu.interconnect().bios().metadata();
+                let bios_desc = format!("{:?}", bios_md);
+
+                vcd::dump_trace(&mut vcd_file, content, &bios_desc, trace);
+            }
+        }
+    }
+}
+
 impl libretro::Context for Context {
 
     fn render_frame(&mut self) {
@@ -573,8 +603,6 @@ impl libretro::Context for Context {
             debug!("Frame counters:");
             debug!("    CPU interrupt count: {}", counters.cpu_interrupt.get());
         }
-
-        counters.cpu_interrupt.reset();
 
         if self.monitor_internal_fps {
             let frame_count = counters.frame.get();
@@ -802,3 +830,8 @@ const BUTTON_MAP: [(libretro::JoyPadButton, Button); 14] =
 
 /// Number of output frames over which the internal FPS is averaged
 const INTERNAL_FPS_SAMPLE_PERIOD: u32 = 32;
+
+/// Hardcoded path for the generated VCD file when tracing is
+/// enabled. XXX Should probably be changed for Windows, maybe made
+/// configurable somehow?
+const VCD_TRACE_PATH: &'static str = "/tmp/rustation-trace.vcd";
