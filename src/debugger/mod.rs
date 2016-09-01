@@ -5,6 +5,8 @@ use rustation::debugger::Debugger as DebuggerInterface;
 use rustation::cpu::Cpu;
 use self::gdb::GdbRemote;
 
+use rustation::tracer::Tracer;
+
 mod gdb;
 
 /// Rustation-libretro debugger, based on the GDB remote serial
@@ -51,7 +53,7 @@ impl Debugger {
         }
     }
 
-    fn debug(&mut self, cpu: &mut Cpu) {
+    fn debug<T: Tracer>(&mut self, cpu: &mut Cpu<T>) {
         // If stepping was requested we can reset the flag here, this
         // way we won't "double step" if we're entering debug mode for
         // an other reason (data watchpoint for instance)
@@ -153,7 +155,7 @@ impl DebuggerInterface for Debugger {
     /// Called by the CPU when it's about to execute a new
     /// instruction. This function is called before *all* CPU
     /// instructions so it needs to be as fast as possible.
-    fn pc_change(&mut self, cpu: &mut Cpu) {
+    fn pc_change<T: Tracer>(&mut self, cpu: &mut Cpu<T>) {
         // Check if stepping was requested or if we encountered a
         // breakpoint
         if self.step || self.breakpoints.contains(&cpu.pc()) {
@@ -162,7 +164,7 @@ impl DebuggerInterface for Debugger {
     }
 
     /// Called by the CPU when it's about to load a value from memory.
-    fn memory_read(&mut self, cpu: &mut Cpu, addr: u32) {
+    fn memory_read<T: Tracer>(&mut self, cpu: &mut Cpu<T>, addr: u32) {
         // XXX: how should we handle unaligned watchpoints? For
         // instance if we have a watchpoint on address 1 and the CPU
         // executes a `load32 at` address 0, should we break? Also,
@@ -174,7 +176,7 @@ impl DebuggerInterface for Debugger {
     }
 
     /// Called by the CPU when it's about to write a value to memory.
-    fn memory_write(&mut self, cpu: &mut Cpu, addr: u32) {
+    fn memory_write<T: Tracer>(&mut self, cpu: &mut Cpu<T>, addr: u32) {
         // XXX: same remark as memory_read for unaligned stores
         if self.write_watchpoints.contains(&addr) {
             info!("Write watchpoint triggered at 0x{:08x}", addr);

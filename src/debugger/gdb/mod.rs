@@ -6,6 +6,8 @@ use rustation::memory::{Byte, HalfWord, Word};
 
 use debugger::Debugger;
 
+use rustation::tracer::Tracer;
+
 use self::reply::Reply;
 
 mod reply;
@@ -35,9 +37,9 @@ impl GdbRemote {
     }
 
     // Serve a single remote request
-    pub fn serve(&mut self,
-                 debugger: &mut Debugger,
-                 cpu: &mut Cpu) -> GdbResult {
+    pub fn serve<T: Tracer>(&mut self,
+                            debugger: &mut Debugger,
+                            cpu: &mut Cpu<T>) -> GdbResult {
 
         match self.next_packet() {
             PacketResult::Ok(packet) => {
@@ -160,10 +162,10 @@ impl GdbRemote {
         }
     }
 
-    fn handle_packet(&mut self,
-                     debugger: &mut Debugger,
-                     cpu: &mut Cpu,
-                     packet: &[u8]) -> GdbResult {
+    fn handle_packet<T: Tracer>(&mut self,
+                                debugger: &mut Debugger,
+                                cpu: &mut Cpu<T>,
+                                packet: &[u8]) -> GdbResult {
 
         let command = packet[0];
         let args = &packet[1..];
@@ -227,7 +229,7 @@ impl GdbRemote {
         self.send_string(b"OK")
     }
 
-    fn read_registers(&mut self, cpu: &mut Cpu) -> GdbResult {
+    fn read_registers<T: Tracer>(&mut self, cpu: &mut Cpu<T>) -> GdbResult {
 
         let mut reply = Reply::new();
 
@@ -268,7 +270,9 @@ impl GdbRemote {
 
     /// Read a region of memory. The packet format should be
     /// `ADDR,LEN`, both in hexadecimal
-    fn read_memory(&mut self, cpu: &mut Cpu, args: &[u8]) -> GdbResult {
+    fn read_memory<T: Tracer>(&mut self,
+                              cpu: &mut Cpu<T>,
+                              args: &[u8]) -> GdbResult {
 
         let mut reply = Reply::new();
 
@@ -346,10 +350,10 @@ impl GdbRemote {
     }
 
     /// Continue execution
-    fn resume(&mut self,
-              debugger: &mut Debugger,
-              cpu: &mut Cpu,
-              args: &[u8]) -> GdbResult {
+    fn resume<T: Tracer>(&mut self,
+                         debugger: &mut Debugger,
+                         cpu: &mut Cpu<T>,
+                         args: &[u8]) -> GdbResult {
 
         if args.len() > 0 {
             // If an address is provided we restart from there
@@ -366,10 +370,10 @@ impl GdbRemote {
 
     // Step works exactly like continue except that we're only
     // supposed to execute a single instruction.
-    fn step(&mut self,
-            debugger: &mut Debugger,
-            cpu: &mut Cpu,
-            args: &[u8]) -> GdbResult {
+    fn step<T: Tracer>(&mut self,
+                       debugger: &mut Debugger,
+                       cpu: &mut Cpu<T>,
+                       args: &[u8]) -> GdbResult {
 
         debugger.set_step();
 

@@ -12,6 +12,9 @@ description = "Libretro implementation for the Rustation PlayStation emulator"
 license = "GPL-2.0+"
 keywords = ["emulator", "playstation"]
 
+[features]
+trace = []
+
 [lib]
 name = "rustation_retro"
 crate-type = ["dylib"]
@@ -22,6 +25,7 @@ gl = "0.5.2"
 log = "0.3.4"
 arrayvec = "0.3.15"
 rustc-serialize = "0.3.19"
+time = "0.1.35"
 
 [dependencies.rustation]
 path = "rustation"

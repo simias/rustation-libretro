@@ -12,6 +12,7 @@ mod retrolog;
 mod renderer;
 mod savestate;
 mod debugger;
+mod vcd;
 
 use std::path::{Path, PathBuf};
 use std::fs::File;
@@ -44,6 +45,7 @@ extern crate rustation;
 extern crate arrayvec;
 extern crate cdimage;
 extern crate rustc_serialize;
+extern crate time;
 
 /// Static system information sent to the frontend on request
 const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
@@ -54,10 +56,16 @@ const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
     block_extract: false,
 };
 
+/// Optional tracing
+#[cfg(feature = "trace")]
+type Logger = vcd::Logger;
+#[cfg(not(feature = "trace"))]
+type Logger = ();
+
 /// Emulator context
 struct Context {
     retrogl: retrogl::RetroGl,
-    cpu: Cpu,
+    cpu: Cpu<Logger>,
     shared_state: SharedState,
     debugger: Debugger,
     disc_path: PathBuf,
@@ -284,7 +292,8 @@ impl Context {
         Ok(())
     }
 
-    fn load_exe(loader: exe_loader::ExeLoader) -> Result<(Cpu, VideoClock), ()> {
+    fn load_exe(loader: exe_loader::ExeLoader)
+                -> Result<(Cpu<Logger>, VideoClock), ()> {
         let region =
             match loader.region() {
                 Some(r) => {
@@ -335,7 +344,7 @@ impl Context {
         Ok((Cpu::new(inter), video_clock))
     }
 
-    fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
+    fn load_disc(disc: &Path) -> Result<(Cpu<Logger>, VideoClock), ()> {
 
         let image =
             match Cue::new(disc) {
@@ -543,6 +552,28 @@ impl Context {
     /// Trigger a breakpoint in the debugger
     fn trigger_break(&mut self) {
         rustation::debugger::Debugger::trigger_break(&mut self.debugger);
+    }
+}
+
+impl Drop for Context {
+    fn drop(&mut self) {
+        if cfg!(feature = "trace") {
+            use rustation::tracer::Collector;
+
+            // Dump the trace before destroying everything
+
+            let path = "/tmp/trace.vcd";
+
+            info!("Dumping VCD trace file to {}", path);
+
+            let mut vcd_file = File::create(path).unwrap();
+
+            let mut vcd = vcd::Vcd::new(&mut vcd_file);
+
+            vcd.submodule("CPU", |c| {
+                self.cpu.collect(c)
+            });
+        }
     }
 }
 
