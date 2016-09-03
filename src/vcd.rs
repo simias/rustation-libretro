@@ -7,6 +7,9 @@ use rustation::tracer::{Tracer, Variable, Event, Value, Collector};
 /// `Vec`
 pub struct Logger {
     variables: Vec<Variable>,
+    /// Last recorded values for the variables, to avoid adding
+    /// useless events
+    values: Vec<Option<u32>>,
     /// List of events: (date, id, value). The `id` is simply the
     /// position of the variable in `variables`.
     log: Vec<Event>,
@@ -16,17 +19,21 @@ impl Default for Logger {
     fn default() -> Self {
         Logger {
             variables: Vec::new(),
+            values: Vec::new(),
             log: Vec::new(),
         }
     }
 }
 
 impl Tracer for Logger {
-    fn event(&mut self,
-             date: u64,
-             variable: &str,
-             size: u8,
-             value: Value) {
+    fn event<V: Into<Value>>(&mut self,
+                             date: u64,
+                             variable: &str,
+                             value: V) {
+
+        let value = value.into();
+        let size = value.1;
+        let value = value.0;
 
         match self.variables.iter().position(|n| n.name() == variable) {
             Some(i) => {
@@ -35,6 +42,14 @@ impl Tracer for Logger {
                            variable, size, self.variables[i].size());
                 }
 
+                if let Some(v) = self.values[i] {
+                    if v == value {
+                        // Value didn't change, ignore
+                        return;
+                    }
+                }
+
+                self.values[i] = Some(value);
                 self.log.push(Event(date, i as u32, value));
             }
             None => {
@@ -42,6 +57,8 @@ impl Tracer for Logger {
                 let var = Variable::new(variable.into(), size);
 
                 self.variables.push(var);
+                self.values.push(Some(value));
+
                 self.log.push(Event(date,
                                     (self.variables.len() - 1) as u32,
                                     value));
@@ -59,6 +76,10 @@ impl Tracer for Logger {
 
     fn clear(&mut self) {
         self.log.clear();
+
+        for v in self.values.iter_mut() {
+            *v = None;
+        }
     }
 }
 
@@ -88,11 +109,11 @@ pub struct Vcd<'a> {
     cur_id: u32,
     // Log of all the events from all modules: (date, variable
     // identifier, value, is_scalar)
-    events: Vec<(u64, u32, Value, bool)>,
+    events: Vec<(u64, u32, u32, bool)>,
 }
 
 impl<'a> Vcd<'a> {
-    pub fn new(w: &'a mut Write) -> Vcd<'a> {
+    pub fn new(w: &'a mut Write, content: &str, bios: &str) -> Vcd<'a> {
         let mut vcd =
             Vcd {
                 w: w,
@@ -100,16 +121,27 @@ impl<'a> Vcd<'a> {
                 events: Vec::new(),
             };
 
-        vcd.header();
+        vcd.header(content, bios);
 
         vcd
     }
 
-    fn header(&mut self) {
-        self.write_str("\n");
-
+    fn header(&mut self, content: &str, bios: &str) {
         // Write the current date
         let now = ::time::now();
+
+        // Replace $ with something else not to configure the VCD
+        // parser in the unlikely situation we end up with a VCD
+        // directive in a file name
+        let content = content.replace('$', " ");
+        let bios = bios.replace('$', " ");
+
+        // Put a comment at the top of the file with the content and
+        // BIOS information
+        let comment = format!("$comment\n  Tracing {}\n  BIOS: {}\n$end\n",
+                              content, bios);
+
+        self.write_str(&comment);
 
         let months = [ "January",    "February",
                         "March",     "April",
@@ -184,7 +216,7 @@ impl<'a> Drop for Vcd<'a> {
                     assert!(val & 1 == val);
                     format!("{}{}\n", val, id)
                 } else {
-                    // Not sure if other formats than binary are supported.
+                    // Apparently only binary is supported...
                     format!("b{:b} {}\n", val, id)
                 };
 

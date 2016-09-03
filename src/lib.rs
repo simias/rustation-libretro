@@ -568,7 +568,15 @@ impl Drop for Context {
 
             let mut vcd_file = File::create(path).unwrap();
 
-            let mut vcd = vcd::Vcd::new(&mut vcd_file);
+            let mut vcd = {
+
+                let content = &*self.disc_path.to_string_lossy();
+
+                let bios_md = self.cpu.interconnect().bios().metadata();
+                let bios_desc = format!("{:?}", bios_md);
+
+                vcd::Vcd::new(&mut vcd_file, content, &bios_desc)
+            };
 
             vcd.submodule("CPU", |c| {
                 self.cpu.collect(c)
