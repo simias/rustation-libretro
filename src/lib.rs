@@ -562,7 +562,7 @@ impl Drop for Context {
 
             // Dump the trace before destroying everything
 
-            let path = "/tmp/trace.vcd";
+            let path = VCD_TRACE_PATH;
 
             info!("Dumping VCD trace file to {}", path);
 
@@ -841,3 +841,8 @@ const BUTTON_MAP: [(libretro::JoyPadButton, Button); 14] =
 
 /// Number of output frames over which the internal FPS is averaged
 const INTERNAL_FPS_SAMPLE_PERIOD: u32 = 32;
+
+/// Hardcoded path for the generated VCD file when tracing is
+/// enabled. XXX Should probably be changed for Windows, maybe made
+/// configurable somehow?
+const VCD_TRACE_PATH: &'static str = "/tmp/rustation-trace.vcd";
