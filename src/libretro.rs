@@ -14,6 +14,7 @@ use std::ptr;
 use std::ffi::{CStr, CString};
 use libc::{c_void, c_char, c_uint, c_float, c_double, size_t, int16_t};
 use std::path::PathBuf;
+use std::panic;
 
 pub trait Context {
     /// Get the system's audio and video parameters
@@ -781,11 +782,21 @@ pub unsafe extern "C" fn retro_run() {
 
     let context = context();
 
-    if variables_need_update() {
-        context.refresh_variables();
-    }
+    let r = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        if variables_need_update() {
+            context.refresh_variables();
+        }
 
-    context.render_frame();
+        context.render_frame();
+    }));
+
+    // Catch panics to cleanly destroy everything. Since this method
+    // is called from a C FFI the panic won't be able to go up anyway.
+    if r.is_err() {
+        drop_context();
+        // This will probably cause an abort
+        panic!("retro_run panicked");
+    }
 }
 
 #[no_mangle]
