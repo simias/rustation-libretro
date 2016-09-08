@@ -32,6 +32,7 @@ use rustation::cpu::Cpu;
 use rustation::padmemcard::gamepad::{Button, ButtonState, DigitalProfile};
 use rustation::shared::SharedState;
 use rustation::parallel_io::exe_loader;
+use rustation::tracer;
 
 use cdimage::cue::Cue;
 
@@ -56,16 +57,10 @@ const SYSTEM_INFO: libretro::SystemInfo = libretro::SystemInfo {
     block_extract: false,
 };
 
-/// Optional tracing
-#[cfg(feature = "trace")]
-type Logger = vcd::Logger;
-#[cfg(not(feature = "trace"))]
-type Logger = ();
-
 /// Emulator context
 struct Context {
     retrogl: retrogl::RetroGl,
-    cpu: Cpu<Logger>,
+    cpu: Cpu,
     shared_state: SharedState,
     debugger: Debugger,
     disc_path: PathBuf,
@@ -293,7 +288,7 @@ impl Context {
     }
 
     fn load_exe(loader: exe_loader::ExeLoader)
-                -> Result<(Cpu<Logger>, VideoClock), ()> {
+                -> Result<(Cpu, VideoClock), ()> {
         let region =
             match loader.region() {
                 Some(r) => {
@@ -344,7 +339,7 @@ impl Context {
         Ok((Cpu::new(inter), video_clock))
     }
 
-    fn load_disc(disc: &Path) -> Result<(Cpu<Logger>, VideoClock), ()> {
+    fn load_disc(disc: &Path) -> Result<(Cpu, VideoClock), ()> {
 
         let image =
             match Cue::new(disc) {
@@ -558,29 +553,25 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         if cfg!(feature = "trace") {
-            use rustation::tracer::Collector;
-
             // Dump the trace before destroying everything
-
             let path = VCD_TRACE_PATH;
 
-            info!("Dumping VCD trace file to {}", path);
+            let trace = tracer::remove_trace();
 
-            let mut vcd_file = File::create(path).unwrap();
+            if trace.is_empty() {
+                warn!("Empty trace, ignoring");
+            } else {
+                info!("Dumping VCD trace file to {}", path);
 
-            let mut vcd = {
+                let mut vcd_file = File::create(path).unwrap();
 
                 let content = &*self.disc_path.to_string_lossy();
 
                 let bios_md = self.cpu.interconnect().bios().metadata();
                 let bios_desc = format!("{:?}", bios_md);
 
-                vcd::Vcd::new(&mut vcd_file, content, &bios_desc)
-            };
-
-            vcd.submodule("CPU", |c| {
-                self.cpu.collect(c)
-            });
+                vcd::dump_trace(&mut vcd_file, content, &bios_desc, trace);
+            }
         }
     }
 }

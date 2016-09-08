@@ -1,271 +1,125 @@
 use std::io::Write;
 
-use rustc_serialize::{Encoder, Encodable, Decoder, Decodable};
-use rustation::tracer::{Tracer, Variable, Event, Value, Collector};
+use std::collections::HashMap;
+use rustation::tracer::Module;
 
-/// Straightforward implementation of a logger storing all events in a
-/// `Vec`
-pub struct Logger {
-    variables: Vec<Variable>,
-    /// Last recorded values for the variables, to avoid adding
-    /// useless events
-    values: Vec<Option<u32>>,
-    /// List of events: (date, id, value). The `id` is simply the
-    /// position of the variable in `variables`.
-    log: Vec<Event>,
-}
+pub fn dump_trace(w: &mut Write,
+                  content: &str,
+                  bios: &str,
+                  trace: HashMap<&'static str, Module>) {
 
-impl Default for Logger {
-    fn default() -> Self {
-        Logger {
-            variables: Vec::new(),
-            values: Vec::new(),
-            log: Vec::new(),
+    write_header(w, content, bios);
+
+    let mut cur_id: u32 = 0;
+
+    let mut log = Vec::new();
+
+    for (name, m) in trace.iter() {
+        let v = m.variables();
+
+        if v.is_empty() {
+            continue;
         }
-    }
-}
 
-impl Tracer for Logger {
-    fn event<V: Into<Value>>(&mut self,
-                             date: u64,
-                             variable: &str,
-                             value: V) {
-
-        let value = value.into();
-        let size = value.1;
-        let value = value.0;
-
-        match self.variables.iter().position(|n| n.name() == variable) {
-            Some(i) => {
-                if self.variables[i].size() != size {
-                    panic!("Incoherent size for variable {}: got {} and {}",
-                           variable, size, self.variables[i].size());
-                }
-
-                if let Some(v) = self.values[i] {
-                    if v == value {
-                        // Value didn't change, ignore
-                        return;
-                    }
-                }
-
-                self.values[i] = Some(value);
-                self.log.push(Event(date, i as u32, value));
-            }
-            None => {
-                // Add a new variable
-                let var = Variable::new(variable.into(), size);
-
-                self.variables.push(var);
-                self.values.push(Some(value));
-
-                self.log.push(Event(date,
-                                    (self.variables.len() - 1) as u32,
-                                    value));
-            }
-        }
-    }
-
-    fn variables(&self) -> &[Variable] {
-        &self.variables
-    }
-
-    fn log(&self) -> &[Event] {
-        &self.log
-    }
-
-    fn clear(&mut self) {
-        self.log.clear();
-
-        for v in self.values.iter_mut() {
-            *v = None;
-        }
-    }
-}
-
-/// Dummy serialization routine for loggers. We want our savestates to
-/// remain compatible with and without tracing so it should serialize
-/// like `()`. It means that the log itself won't be stored in the
-/// savestate, which is probably a good idea...
-impl Encodable for Logger {
-    fn encode<S>(&self, s: &mut S) -> Result<(), S::Error>
-        where S: Encoder {
-        s.emit_nil()
-    }
-}
-
-impl Decodable for Logger {
-    fn decode<D>(d: &mut D) -> Result<Logger, D::Error>
-        where D: Decoder {
-        try!(d.read_nil());
-
-        Ok(Default::default())
-    }
-}
-
-/// Collector that will dump the collected traces as a VCD file
-pub struct Vcd<'a> {
-    w: &'a mut Write,
-    cur_id: u32,
-    // Log of all the events from all modules: (date, variable
-    // identifier, value, is_scalar)
-    events: Vec<(u64, u32, u32, bool)>,
-}
-
-impl<'a> Vcd<'a> {
-    pub fn new(w: &'a mut Write, content: &str, bios: &str) -> Vcd<'a> {
-        let mut vcd =
-            Vcd {
-                w: w,
-                cur_id: 0,
-                events: Vec::new(),
-            };
-
-        vcd.header(content, bios);
-
-        vcd
-    }
-
-    fn header(&mut self, content: &str, bios: &str) {
-        // Write the current date
-        let now = ::time::now();
-
-        // Replace $ with something else not to configure the VCD
-        // parser in the unlikely situation we end up with a VCD
-        // directive in a file name
-        let content = content.replace('$', " ");
-        let bios = bios.replace('$', " ");
-
-        // Put a comment at the top of the file with the content and
-        // BIOS information
-        let comment = format!("$comment\n  Tracing {}\n  BIOS: {}\n$end\n",
-                              content, bios);
-
-        self.write_str(&comment);
-
-        let months = [ "January",    "February",
-                        "March",     "April",
-                        "May",       "June",
-                        "July",      "August",
-                        "September", "October",
-                        "November",  "December" ];
-
-        let date = format!("$date\n  {} {}, {} {}:{}:{}\n$end\n",
-                           months[now.tm_mon as usize],
-                           now.tm_mday,
-                           now.tm_year + 1900,
-                           now.tm_hour,
-                           now.tm_min,
-                           now.tm_sec);
-        self.write_str(&date);
-
-        let version = format!("$version\n  Rustation {}\n$end\n",
-                              ::rustation::VERSION);
-        self.write_str(&version);
-
-        // For now I hardcode the PSX CPU clock period
-        let period_ps = 1_000_000_000_000f64 /
-            ::rustation::cpu::CPU_FREQ_HZ as f64;
-
-        let period_ps = period_ps.round() as u32;
-
-        let timescale = format!("$timescale\n  {} ps\n$end\n",
-                                period_ps);
-        self.write_str(&timescale);
-
-        // Finally we can start with the top level scope
-        self.scope("top");
-    }
-
-    fn scope(&mut self, name: &str) {
         let scope = format!("$scope module {} $end\n", name);
-        self.write_str(&scope);
-    }
+        write_str(w, &scope);
 
-    fn endscope(&mut self) {
-        self.write_str("$upscope $end\n");
-    }
+        for (v_name, v) in v.iter() {
 
-    fn write_str(&mut self, s: &str) {
-        self.w.write_all(s.as_bytes()).unwrap();
-    }
-}
+            let id = cur_id;
+            cur_id += 1;
 
-impl<'a> Drop for Vcd<'a> {
-    fn drop(&mut self) {
-        // Finalize header. End top scope.
-        self.endscope();
+            let var = format!("$var wire {} {} {} $end\n",
+                              v.size(), id, v_name);
+            write_str(w, &var);
 
-        // Sort all the events by timestamp
-        self.events.sort_by_key(|e| e.0);
+            // Scalars (1bit values) don't have space between the
+            // value and identifier in the VCD dump format
+            let is_scalar = v.size() == 1;
 
-        self.write_str("#0\n");
-
-        let mut cur_date = 0;
-
-        for &(date, id, val, scalar) in self.events.iter() {
-            if date != cur_date {
-                self.w.write_all(format!("#{}\n", date).as_bytes()).unwrap();
-                cur_date = date;
+            for &(date, value) in v.log() {
+                log.push((date, id, is_scalar, value));
             }
-
-            let v =
-                // Scalars (1bit values) don't have space between the
-                // value and identifier
-                if scalar {
-                    assert!(val & 1 == val);
-                    format!("{}{}\n", val, id)
-                } else {
-                    // Apparently only binary is supported...
-                    format!("b{:b} {}\n", val, id)
-                };
-
-            self.w.write_all(v.as_bytes()).unwrap();
         }
+
+        write_str(w, "$upscope $end\n");
+    }
+
+    // Sort log by date
+    log.sort_by_key(|v| v.0);
+
+    let mut cur_date = 0;
+
+    write_str(w, "#0\n");
+
+    for &(date, id, is_scalar, value) in log.iter() {
+        if date != cur_date {
+            let d = format!("#{}\n", date);
+            write_str(w, &d);
+            cur_date = date;
+        }
+
+        let v =
+            if is_scalar {
+                format!("{}{}\n", value, id)
+            } else {
+                // Apparently only binary is supported...
+                format!("b{:b} {}\n", value, id)
+            };
+        write_str(w, &v);
     }
 }
 
-impl<'a> Collector for Vcd<'a> {
-    /// XXX improve error handling...
-    type Error = ();
+fn write_header(w: &mut Write,
+                content: &str,
+                bios: &str) {
+    // Write the current date
+    let now = ::time::now();
 
-    fn collect<T: Tracer>(&mut self, tracer: &mut T) {
-        // For simplicity I simply use a sequential number to identify
-        // each variable. VCD format allows for all printable
-        // characters (except space obviously) so we could have a more
-        // compact representation if we wanted.
-        let ids: Vec<_> =
-            tracer.variables().iter()
-            .map(|v| {
-                let id = self.cur_id;
-                self.cur_id += 1;
+    // Replace $ with something else not to configure the VCD
+    // parser in the unlikely situation we end up with a VCD
+    // directive in a file name
+    let content = content.replace('$', " ");
+    let bios = bios.replace('$', " ");
 
-                let var = format!("$var wire {} {} {} $end\n",
-                                  v.size(),
-                                  id,
-                                  v.name());
-                self.write_str(&var);
+    // Put a comment at the top of the file with the content and
+    // BIOS information
+    let comment = format!("$comment\n  Tracing {}\n  BIOS: {}\n$end\n",
+                          content, bios);
 
-                // Scalars (1bit value) are a special case in the VCD
-                // format
-                (id, v.size() == 1)
-            })
-            .collect();
+    write_str(w, &comment);
 
-        for &Event(date, module_id, val) in tracer.log().iter() {
-            let (id, scalar) = ids[module_id as usize];
+    let months = [ "January",    "February",
+                    "March",     "April",
+                    "May",       "June",
+                    "July",      "August",
+                    "September", "October",
+                    "November",  "December" ];
 
-            self.events.push((date, id, val, scalar));
-        }
+    let date = format!("$date\n  {} {}, {} {}:{}:{}\n$end\n",
+                       months[now.tm_mon as usize],
+                       now.tm_mday,
+                       now.tm_year + 1900,
+                       now.tm_hour,
+                       now.tm_min,
+                       now.tm_sec);
+    write_str(w, &date);
 
-        // Finish by clearing the tracer now that we got all its data
-        tracer.clear();
-    }
+    let version = format!("$version\n  Rustation {}\n$end\n",
+                          ::rustation::VERSION);
+    write_str(w, &version);
 
-    fn submodule<F>(&mut self, name: &str, f: F)
-        where F: FnOnce(&mut Self) {
-        self.scope(name);
-        f(self);
-        self.endscope();
-    }
+    // For now I hardcode the PSX CPU clock period
+    let period_ps = 1_000_000_000_000f64 /
+        ::rustation::cpu::CPU_FREQ_HZ as f64;
+
+    let period_ps = period_ps.round() as u32;
+
+    let timescale = format!("$timescale\n  {} ps\n$end\n",
+                            period_ps);
+    write_str(w, &timescale);
+}
+
+fn write_str(w: &mut Write, s: &str) {
+    w.write_all(s.as_bytes()).unwrap();
 }
