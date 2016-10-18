@@ -297,7 +297,8 @@ impl GdbRemote {
                     let count = ::std::cmp::min(len, 4 - align);
 
                     for i in 0..count {
-                        reply.push_u8(cpu.examine::<Byte>(addr + i) as u8);
+                        let b = cpu.examine::<Byte>(addr.wrapping_add(i));
+                        reply.push_u8(b as u8);
                     }
                     count
                 }
@@ -314,8 +315,8 @@ impl GdbRemote {
                 _ => 0,
             };
 
-        let addr = addr + sent;
-        let len = len + sent;
+        let addr = addr.wrapping_add(sent);
+        let len = len - sent;
 
         // We can now deal with the word-aligned portion of the
         // transfer (if any). It's possible that addr is not word
@@ -329,13 +330,14 @@ impl GdbRemote {
         }
 
         // See if we have anything remaining
-        let addr = addr + nwords * 4;
+        let addr = addr.wrapping_add(nwords * 4);
         let rem = len - nwords * 4;
 
         match rem {
             1|3 => {
                 for i in 0..rem {
-                    reply.push_u8(cpu.examine::<Byte>(addr + i) as u8);
+                    let b = cpu.examine::<Byte>(addr.wrapping_add(i));
+                    reply.push_u8(b as u8);
                 }
             }
             2 => {
