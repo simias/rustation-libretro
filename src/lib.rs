@@ -604,8 +604,6 @@ impl libretro::Context for Context {
             debug!("    CPU interrupt count: {}", counters.cpu_interrupt.get());
         }
 
-        counters.cpu_interrupt.reset();
-
         if self.monitor_internal_fps {
             let frame_count = counters.frame.get();
 
