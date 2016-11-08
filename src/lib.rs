@@ -77,6 +77,7 @@ struct Context {
 
 impl Context {
     fn new(disc: &Path) -> Result<Context, ()> {
+        info!("Using Rustation {}", rustation::VERSION);
 
         let (mut cpu, video_clock) =
             match exe_loader::ExeLoader::load_file(disc) {
