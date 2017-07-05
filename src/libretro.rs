@@ -48,20 +48,20 @@ pub trait Context {
 /// the pointer doesn't actually point to anything and is never
 /// dereferenced. It cannot be 0 however, since that would be a NULL
 /// pointer.
-static mut static_context: *mut Context = 1 as *mut dummy::Context;
+static mut STATIC_CONTEXT: *mut Context = 1 as *mut dummy::Context;
 
 unsafe fn set_context(context: Box<Context>) {
-    static_context = Box::into_raw(context);
+    STATIC_CONTEXT = Box::into_raw(context);
 }
 
 unsafe fn drop_context() {
-    Box::from_raw(static_context);
-    static_context = &mut dummy::Context;
+    Box::from_raw(STATIC_CONTEXT);
+    STATIC_CONTEXT = &mut dummy::Context;
 }
 
 fn context() -> &'static mut Context {
     unsafe {
-        &mut *static_context
+        &mut *STATIC_CONTEXT
     }
 }
 
@@ -385,7 +385,7 @@ pub mod hw_context {
         panic!("Called missing get_proc_address callback");
     }
 
-    static mut static_hw_context: RenderCallback = RenderCallback {
+    static mut STATIC_HW_CONTEXT: RenderCallback = RenderCallback {
         context_type: ContextType::OpenGlCore,
         context_reset: reset,
         // Filled by frontend
@@ -405,7 +405,7 @@ pub mod hw_context {
     pub fn init() -> bool {
         unsafe {
             call_environment_mut(Environment::SetHwRender,
-                                 &mut static_hw_context)
+                                 &mut STATIC_HW_CONTEXT)
         }
     }
 
@@ -415,13 +415,13 @@ pub mod hw_context {
         let sym = CString::new(sym).unwrap();
 
         unsafe {
-            (static_hw_context.get_proc_address)(sym.as_ptr() as *const c_char)
+            (STATIC_HW_CONTEXT.get_proc_address)(sym.as_ptr() as *const c_char)
         }
     }
 
     pub fn get_current_framebuffer() -> uintptr_t {
         unsafe {
-            (static_hw_context.get_current_framebuffer)()
+            (STATIC_HW_CONTEXT.get_current_framebuffer)()
         }
     }
 }
@@ -460,7 +460,7 @@ pub mod log {
         panic!("Called missing log callback");
     }
 
-    static mut static_log: PrintfFn = dummy_log as PrintfFn;
+    static mut STATIC_LOG: PrintfFn = dummy_log as PrintfFn;
 
     pub fn init() -> bool {
         let mut cb = Callback { log: dummy_log };
@@ -470,7 +470,7 @@ pub mod log {
                                           &mut cb);
 
             if ok {
-                static_log = cb.log;
+                STATIC_LOG = cb.log;
             }
 
             ok
@@ -504,7 +504,7 @@ pub mod log {
             };
 
         unsafe {
-            static_log(lvl, format.as_ptr() as *const _, cstr);
+            STATIC_LOG(lvl, format.as_ptr() as *const _, cstr);
         }
     }
 }
@@ -513,11 +513,11 @@ pub mod log {
 // Libretro callbacks loaded by the frontend
 //*******************************************
 
-static mut video_refresh: VideoRefreshFn = dummy::video_refresh;
-static mut input_poll: InputPollFn = dummy::input_poll;
-static mut input_state: InputStateFn = dummy::input_state;
-static mut audio_sample_batch: AudioSampleBatchFn = dummy::audio_sample_batch;
-static mut environment: EnvironmentFn = dummy::environment;
+static mut VIDEO_REFRESH: VideoRefreshFn = dummy::video_refresh;
+static mut INPUT_POLL: InputPollFn = dummy::input_poll;
+static mut INPUT_STATE: InputStateFn = dummy::input_state;
+static mut AUDIO_SAMPLE_BATCH: AudioSampleBatchFn = dummy::audio_sample_batch;
+static mut ENVIRONMENT: EnvironmentFn = dummy::environment;
 
 //*******************************
 // Higher level helper functions
@@ -528,7 +528,7 @@ pub fn gl_frame_done(width: u32, height: u32) {
         // When using a hardware renderer we set the data pointer to
         // -1 to notify the frontend that the frame has been rendered
         // in the framebuffer.
-        video_refresh(-1isize as *const _,
+        VIDEO_REFRESH(-1isize as *const _,
                       width as c_uint,
                       height as c_uint,
                       0);
@@ -543,7 +543,7 @@ pub fn send_audio_samples(samples: &[i16]) {
     let frames = (samples.len() / 2) as size_t;
 
     let r = unsafe {
-        audio_sample_batch(samples.as_ptr(), frames)
+        AUDIO_SAMPLE_BATCH(samples.as_ptr(), frames)
     };
 
     if r != frames {
@@ -553,7 +553,7 @@ pub fn send_audio_samples(samples: &[i16]) {
 
 pub fn button_pressed(port: u8, b: JoyPadButton) -> bool {
     unsafe {
-        input_state(port as c_uint,
+        INPUT_STATE(port as c_uint,
                     InputDevice::JoyPad as c_uint,
                     0,
                     b as c_uint) != 0
@@ -562,7 +562,7 @@ pub fn button_pressed(port: u8, b: JoyPadButton) -> bool {
 
 pub fn key_pressed(port: u8, k: Key) -> bool {
     unsafe {
-        input_state(port as c_uint,
+        INPUT_STATE(port as c_uint,
                     InputDevice::Keyboard as c_uint,
                     0,
                     k as c_uint) != 0
@@ -645,15 +645,15 @@ pub unsafe fn register_variables(variables: &[Variable]) -> bool {
 }
 
 unsafe fn call_environment_mut<T>(which: Environment, var: &mut T) -> bool {
-    environment(which as c_uint, var as *mut _ as *mut c_void)
+    ENVIRONMENT(which as c_uint, var as *mut _ as *mut c_void)
 }
 
 unsafe fn call_environment<T>(which: Environment, var: &T) -> bool {
-    environment(which as c_uint, var as *const _ as *mut c_void)
+    ENVIRONMENT(which as c_uint, var as *const _ as *mut c_void)
 }
 
 unsafe fn call_environment_slice<T>(which: Environment, var: &[T]) -> bool {
-    environment(which as c_uint, var.as_ptr() as *const _ as *mut c_void)
+    ENVIRONMENT(which as c_uint, var.as_ptr() as *const _ as *mut c_void)
 }
 
 /// Cast a mutable pointer into a mutable reference, return None if
@@ -690,7 +690,7 @@ pub extern "C" fn retro_api_version() -> c_uint {
 #[no_mangle]
 pub extern "C" fn retro_set_environment(callback: EnvironmentFn) {
     unsafe {
-        environment = callback
+        ENVIRONMENT = callback
     }
 
     ::init_variables();
@@ -699,7 +699,7 @@ pub extern "C" fn retro_set_environment(callback: EnvironmentFn) {
 #[no_mangle]
 pub extern "C" fn retro_set_video_refresh(callback: VideoRefreshFn) {
     unsafe {
-        video_refresh = callback
+        VIDEO_REFRESH = callback
     }
 }
 
@@ -710,25 +710,25 @@ pub extern "C" fn retro_set_audio_sample(_: AudioSampleFn) {
 #[no_mangle]
 pub extern "C" fn retro_set_audio_sample_batch(callback: AudioSampleBatchFn) {
     unsafe {
-        audio_sample_batch = callback
+        AUDIO_SAMPLE_BATCH = callback
     }
 }
 
 #[no_mangle]
 pub extern "C" fn retro_set_input_poll(callback: InputPollFn) {
     unsafe {
-        input_poll = callback
+        INPUT_POLL = callback
     }
 }
 
 #[no_mangle]
 pub extern "C" fn retro_set_input_state(callback: InputStateFn) {
     unsafe {
-        input_state = callback
+        INPUT_STATE = callback
     }
 }
 
-static mut first_init: bool = true;
+static mut FIRST_INIT: bool = true;
 
 #[no_mangle]
 pub extern "C" fn retro_init() {
@@ -737,9 +737,9 @@ pub extern "C" fn retro_init() {
     // which makes it rather useless in my opinion. Let's change that.
 
     unsafe {
-        if first_init {
+        if FIRST_INIT {
             ::init();
-            first_init = false;
+            FIRST_INIT = false;
         }
     }
 }
@@ -778,7 +778,7 @@ pub extern "C" fn retro_reset() {
 
 #[no_mangle]
 pub unsafe extern "C" fn retro_run() {
-    input_poll();
+    INPUT_POLL();
 
     let context = context();
 
