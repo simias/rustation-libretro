@@ -643,6 +643,7 @@ impl libretro::Context for Context {
         self.log_frame_counters = CoreVariables::log_frame_counters();
         self.debug_on_key = CoreVariables::debug_on_key();
         self.cpu.set_debug_on_break(CoreVariables::debug_on_break());
+        self.debugger.set_log_bios_calls(CoreVariables::log_bios_calls());
 
         self.retrogl.refresh_variables();
     }
@@ -743,6 +744,8 @@ libretro_variables!(
         debug_on_reset: bool, parse_bool
             => "Trigger debugger when starting or resetting the emulator; \
                 disabled|enabled",
+        log_bios_calls: bool, parse_bool
+            => "Log BIOS calls; disabled|enabled",
     });
 
 fn parse_upscale(opt: &str) -> Result<u32, <u32 as FromStr>::Err> {
