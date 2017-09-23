@@ -20,12 +20,12 @@ name = "rustation_retro"
 crate-type = ["dylib"]
 
 [dependencies]
-libc = "0.2.4"
-gl = "0.5.2"
-log = "0.3.4"
-arrayvec = "0.3.15"
-rustc-serialize = "0.3.19"
-time = "0.1.35"
+libc = "0.2"
+gl = "0.6"
+log = "0.3"
+arrayvec = "0.4"
+rustc-serialize = "0.3"
+time = "0.1"
 
 [dependencies.rustation]
 path = "rustation"
