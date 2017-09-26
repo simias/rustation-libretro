@@ -642,29 +642,27 @@ pub const STRING_MAX_LEN: usize = 1024 * 1024;
 fn test_serialize_deserialize() {
     use rustc_serialize::{Encodable, Decodable};
 
-    #[derive(RustcDecodable, RustcEncodable, Debug)]
+    #[derive(RustcDecodable, RustcEncodable, Debug, PartialEq, Eq)]
     enum Enum {
         A,
         B,
         C,
     }
 
-    #[derive(RustcDecodable, RustcEncodable, Debug)]
+    #[derive(RustcDecodable, RustcEncodable, Debug, PartialEq, Eq)]
     enum EnumArgs {
         X(u32),
         Y(String, u8),
         Z(Vec<char>, Enum, i16),
     }
 
-    #[derive(RustcDecodable, RustcEncodable, Debug)]
+    #[derive(RustcDecodable, RustcEncodable, Debug, PartialEq, Eq)]
     struct Struct {
         field: u32,
         field2: i32,
     }
 
-    // Automatically generate `RustcDecodable` and `RustcEncodable` trait
-    // implementations
-    #[derive(RustcDecodable, RustcEncodable, Debug)]
+    #[derive(RustcDecodable, RustcEncodable, Debug, PartialEq, Eq)]
     struct TestStruct  {
         data_int: u8,
         data_str: String,
@@ -672,39 +670,37 @@ fn test_serialize_deserialize() {
         data_struct: Struct,
         data_enum: Enum,
         data_enum_args: EnumArgs,
-        data_tuple: (u64, char, bool),
+        data_tuple: (u64, char, bool, ()),
         data_option: Option<i64>,
     }
 
     let object = TestStruct {
         data_int: 1,
         data_str: "homura".to_string(),
-        data_vector: vec![2,3,4,5],
+        data_vector: vec![2, 3, 4, 5],
         data_struct: Struct {
             field: 0x42,
             field2: -1,
         },
         data_enum: Enum::B,
-        data_enum_args: EnumArgs::Z(vec!['@'; 10], Enum::C, -3),
-        data_tuple: (1234, '!', true),
+        data_enum_args: EnumArgs::Z(vec!['@', 'a', 'é', 'π'], Enum::C, -3),
+        data_tuple: (1234, '!', true, ()),
         data_option: Some(-4335),
     };
 
-    {
-        let mut out = ::std::fs::File::create("/tmp/savestate").unwrap();
-
-        let mut e = Encoder::new(&mut out).unwrap();
-
-        object.encode(&mut e).unwrap();
-    }
+    let mut serialized = Vec::new();
 
     {
-        let mut save = ::std::fs::File::open("/tmp/savestate").unwrap();
+        let mut encoder = Encoder::new(&mut serialized).unwrap();
 
-        let mut d = Decoder::new(&mut save).unwrap();
-
-        let out: TestStruct = Decodable::decode(&mut d).unwrap();
-
-        println!("{:?}", out);
+        object.encode(&mut encoder).unwrap();
     }
+
+    let mut reader: &[u8] = &serialized;
+
+    let mut decoder = Decoder::new(&mut reader).unwrap();
+
+    let decoded: TestStruct = Decodable::decode(&mut decoder).unwrap();
+
+    assert_eq!(decoded, object);
 }
