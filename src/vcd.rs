@@ -96,7 +96,7 @@ fn write_header(w: &mut Write,
                     "September", "October",
                     "November",  "December" ];
 
-    let date = format!("$date\n  {} {}, {} {}:{}:{}\n$end\n",
+    let date = format!("$date\n  {} {}, {} {:02}:{:02}:{:02}\n$end\n",
                        months[now.tm_mon as usize],
                        now.tm_mday,
                        now.tm_year + 1900,
