@@ -348,7 +348,7 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
 
         for &b in b.iter().rev() {
             v <<= 8;
-            v |= b.into();
+            v |= b as u64;
         }
 
         Ok(v)
@@ -363,7 +363,7 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
 
         for &b in b.iter().rev() {
             v <<= 8;
-            v |= b.into();
+            v |= b as u32;
         }
 
         Ok(v)
@@ -378,7 +378,7 @@ impl<'a> ::rustc_serialize::Decoder for Decoder<'a> {
 
         for &b in b.iter().rev() {
             v <<= 8;
-            v |= b.into();
+            v |= b as u16;
         }
 
         Ok(v)
